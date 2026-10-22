@@ -1,0 +1,27 @@
+# Android build output and caches
+android/.gradle/
+android/build/
+android/app/build/
+android/.idea/
+android/.kotlin/
+*.apk
+*.aab
+
+# Per-PC settings (points at the local Android SDK)
+android/local.properties
+
+# Python
+__pycache__/
+*.pyc
+
+# Relay bundle built for the board (lib/ with downloaded wheels)
+robot-ble/
+wheels/
+
+# Editor / tool settings
+.claude/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store

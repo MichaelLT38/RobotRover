@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RobotRover Controller</title>
+<style>
+  :root {
+    --bg: #12151a; --card: #1c2129; --pill: #262c36; --dpad: #232934; --dpad-btn: #2e3541; --track: #3a4250;
+    --text: #e6e9ef; --text2: #8b93a1; --accent: #ff9f43; --accent-pressed: #e88a2e; --on-accent: #1a1206;
+    --stop: #e5484d; --stop-pressed: #c93c40;
+    --offline: #5c6470; --busy: #ffcc4d; --ok: #3ecf8e; --demo: #6cb4ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 "Segoe UI", Roboto, system-ui, sans-serif; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 32px; }
+  svg.i { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: -4px; }
+
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .title { display: flex; align-items: center; gap: 8px; font-size: 22px; font-weight: 500; margin-right: auto; }
+  .title svg.i { width: 26px; height: 26px; color: var(--accent); }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: var(--pill); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--offline); }
+  .btn { height: 40px; padding: 0 18px; border-radius: 999px; border: 1px solid var(--track); background: transparent; color: var(--text); font: 500 14px "Segoe UI", Roboto, sans-serif; cursor: pointer; }
+  .btn:hover { background: var(--pill); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .btn.primary:hover { background: var(--accent-pressed); }
+  #detail { color: var(--text2); font-size: 12px; margin: 8px 0 4px; min-height: 17px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; margin-top: 8px; }
+  .card { background: var(--card); border-radius: 16px; padding: 16px; min-width: 0; }
+  .ct { display: flex; align-items: center; justify-content: space-between; color: var(--text2); font-size: 13px; letter-spacing: .3px; margin-bottom: 8px; }
+  .off .card.ctl { opacity: .4; pointer-events: none; }
+
+  .dpad { position: relative; width: 216px; height: 216px; margin: 10px auto 4px; border-radius: 50%; background: var(--dpad); border: 1px solid var(--dpad-btn); }
+  .db { position: absolute; width: 64px; height: 64px; border-radius: 50%; border: 0; background: var(--dpad-btn); color: var(--text); cursor: pointer; display: flex; align-items: center; justify-content: center; touch-action: none; user-select: none; }
+  .db svg.i { width: 28px; height: 28px; }
+  .db.on { background: var(--accent); color: var(--on-accent); }
+  .db.up { left: 76px; top: 6px; } .db.left { left: 6px; top: 76px; } .db.right { left: 146px; top: 76px; } .db.down { left: 76px; top: 146px; }
+  .stop { position: absolute; left: 71px; top: 71px; width: 72px; height: 72px; border-radius: 50%; border: 0; background: var(--stop); color: #fff; font: 500 14px "Segoe UI", Roboto, sans-serif; cursor: pointer; }
+  .stop:active { background: var(--stop-pressed); }
+
+  .row { display: flex; align-items: center; justify-content: space-between; }
+  .row .lbl svg.i { color: var(--text2); margin-right: 8px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); margin: 6px 0 12px; }
+  .seg { display: flex; background: var(--pill); border-radius: 999px; padding: 3px; }
+  .seg button { flex: 1; height: 34px; border: 0; border-radius: 999px; background: transparent; color: var(--text2); font: 500 14px "Segoe UI", Roboto, sans-serif; cursor: pointer; }
+  .seg button.sel { background: var(--accent); color: var(--on-accent); }
+  .link { border: 0; background: transparent; color: var(--accent); font: 500 13px "Segoe UI", Roboto, sans-serif; cursor: pointer; padding: 2px 4px; }
+
+  #log { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; line-height: 1.7; min-height: 150px; color: var(--text2); white-space: pre-wrap; word-break: break-word; }
+  #log .new { color: var(--text); }
+  #log .you { color: var(--accent); }
+  .console { display: flex; gap: 8px; margin-top: 10px; }
+  .console input { flex: 1; min-width: 0; height: 36px; border-radius: 10px; border: 1px solid var(--track); background: var(--bg); color: var(--text); padding: 0 12px; font-family: Consolas, "Cascadia Mono", monospace; }
+  .console input:focus { outline: none; border-color: var(--accent); }
+  .keys { color: var(--text2); font-size: 12px; margin-top: 10px; line-height: 1.8; }
+  kbd { background: var(--pill); border-radius: 4px; padding: 1px 6px; font-family: inherit; color: var(--text); }
+  .matrix { display: grid; grid-template-columns: repeat(13, 1fr); gap: 5px; background: #0d1117; border-radius: 10px; padding: 14px; }
+  .matrix span { aspect-ratio: 1; border-radius: 50%; background: #1b2233; }
+  .note { color: var(--text2); font-size: 12px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap off" id="app">
+  <header>
+    <div class="title"><svg class="i" viewBox="0 0 24 24"><path d="M7 7h10a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2zM12 7V5M9.5 11.5v.01M14.5 11.5v.01M10 15h4M3 11v3M21 11v3"/><circle cx="12" cy="3.5" r="1"/></svg>RobotRover</div>
+    <span class="pill"><span class="dot" id="dot"></span><span id="pillText">Offline</span></span>
+    <button class="btn" id="demoBtn">Try demo</button>
+    <button class="btn primary" id="connectBtn"><svg class="i" viewBox="0 0 24 24"><path d="M7 8l10 8-5 4V4l5 4-10 8"/></svg> Connect to robot</button>
+  </header>
+  <div id="detail">Connect over your PC's Bluetooth, or try the demo without a robot.</div>
+
+  <div class="grid">
+    <!-- Drive -->
+    <div class="card ctl">
+      <div class="ct"><span>Drive</span><span class="pill" id="speedPill">Speed 180</span></div>
+      <div class="dpad">
+        <button class="db up drv" data-cmd="w" aria-label="Forward"><svg class="i" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
+        <button class="db left drv" data-cmd="a" aria-label="Spin left"><svg class="i" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <button class="db right drv" data-cmd="d" aria-label="Spin right"><svg class="i" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+        <button class="db down drv" data-cmd="s" aria-label="Backward"><svg class="i" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+        <button class="stop" id="stopBtn">Stop</button>
+      </div>
+      <div class="row" style="margin-top:14px"><span class="lbl"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="1"/><path d="M13.4 10.6L16 8M7 12a5 5 0 0 1 5-5"/></svg>Speed</span></div>
+      <input type="range" id="speed" min="0" max="255" value="180" step="1" data-cmd="speed">
+      <div class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrow keys to drive (hold) &middot; <kbd>Space</kbd> stop<br><kbd>O</kbd> open &middot; <kbd>C</kbd> close &middot; <kbd>H</kbd> home</div>
+    </div>
+
+    <!-- Arm -->
+    <div class="card ctl">
+      <div class="ct"><span>Arm</span><button class="link" id="homeBtn"><svg class="i" viewBox="0 0 24 24" style="width:15px;height:15px;vertical-align:-3px"><path d="M5 12H3l9-9 9 9h-2M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7M9 21v-6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v6"/></svg> Home</button></div>
+      <div class="row"><span class="lbl"><svg class="i" viewBox="0 0 24 24"><path d="M19.95 11a8 8 0 1 0-.5 4M20 20v-5h-5"/></svg>Base</span><span class="pill" id="v-base">90°</span></div>
+      <input type="range" id="base" min="0" max="180" value="90" step="1" data-cmd="base">
+      <div class="row"><span class="lbl"><svg class="i" viewBox="0 0 24 24"><path d="M17 7L7 17M8 7h9v9"/></svg>Shoulder</span><span class="pill" id="v-shoulder">90°</span></div>
+      <input type="range" id="shoulder" min="15" max="165" value="90" step="1" data-cmd="shoulder">
+      <div class="row"><span class="lbl"><svg class="i" viewBox="0 0 24 24"><path d="M5 19v-7a3 3 0 0 1 3-3h11M15 5l4 4-4 4"/></svg>Elbow</span><span class="pill" id="v-elbow">90°</span></div>
+      <input type="range" id="elbow" min="15" max="165" value="90" step="1" data-cmd="elbow">
+      <div class="row"><span class="lbl"><svg class="i" viewBox="0 0 24 24"><path d="M7 3v5a5 5 0 0 0 10 0V3M12 13v8M9 21h6"/></svg>Gripper</span><span class="pill" id="v-grip">30°</span></div>
+      <input type="range" id="grip" min="30" max="120" value="30" step="1" data-cmd="grip" style="margin-bottom:8px">
+      <div class="seg"><button id="openBtn" class="sel">Open</button><button id="closeBtn">Close</button></div>
+    </div>
+
+    <!-- Replies + console -->
+    <div class="card">
+      <div class="ct"><span>Robot says</span><svg class="i" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M3 20l1.3-3.9a9 8 0 1 1 3.4 2.9L3 20"/></svg></div>
+      <div id="log"></div>
+      <form class="console" id="consoleForm" autocomplete="off">
+        <input id="consoleInput" placeholder="Type a command, e.g. base 45" aria-label="Command">
+        <button class="btn" type="submit">Send</button>
+      </form>
+    </div>
+
+    <!-- LED matrix preview -->
+    <div class="card">
+      <div class="ct"><span>LED matrix</span><span class="pill" id="matrixMode">Preview</span></div>
+      <div class="matrix" id="matrix"></div>
+      <div class="note" id="matrixNote">Shows what the board's matrix displays for the commands sent from here.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------------
+//  Settings (match the phone app, the relay and the sketch)
+// ---------------------------------------------------------------------
+const NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";   // we write commands here
+const NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";   // robot replies here
+const DRIVE_REPEAT_MS = 150, DRIVE_PULSE_MS = 400;        // hold-to-drive pulses
+const SLIDER_SEND_MS = 100, LOG_LINES = 10;
+const GRIP_OPEN = 30, GRIP_CLOSED = 120;
+const HOME = { base: 90, shoulder: 90, elbow: 90, grip: GRIP_OPEN };
+// Same allowlist as board/robot_ble_bridge.py
+const ALLOWED = /^(?:(?:w|a|s|d) \d{1,5}|w|a|s|d|x|stop|open|close|home|pos|(?:speed|base|shoulder|elbow|grip) \d{1,3})$/;
+
+const $ = (id) => document.getElementById(id);
+const enc = new TextEncoder(), dec = new TextDecoder();
+
+// ---------------------------------------------------------------------
+//  Connection state + UI
+// ---------------------------------------------------------------------
+let mode = "offline";            // offline | searching | connecting | connected | demo
+let device = null, rxChar = null;
+
+function setMode(next) {
+  mode = next;
+  const look = {
+    offline:    ["Offline", "--offline"],
+    searching:  ["Searching…", "--busy"],
+    connecting: ["Connecting…", "--busy"],
+    connected:  ["Connected", "--ok"],
+    demo:       ["Demo", "--demo"],
+  }[next];
+  $("pillText").textContent = look[0];
+  $("dot").style.background = `var(${look[1]})`;
+
+  const live = next === "connected" || next === "demo";
+  $("app").classList.toggle("off", !live);
+  const cb = $("connectBtn");
+  cb.classList.toggle("primary", next === "offline");
+  cb.lastChild.textContent = next === "connected" ? " Disconnect" : next === "offline" ? " Connect to robot" : " Cancel";
+  cb.style.display = next === "demo" ? "none" : "";
+  $("demoBtn").textContent = next === "demo" ? "Exit demo" : "Try demo";
+  $("demoBtn").style.display = next === "offline" || next === "demo" ? "" : "none";
+  $("matrixMode").textContent = next === "demo" ? "Demo" : next === "connected" ? "Mirror" : "Preview";
+  $("matrixNote").textContent = next === "connected"
+    ? "Mirrors what the board's matrix shows for commands sent from here (not ones typed in the Serial Monitor)."
+    : "Shows what the board's matrix displays for each command. Try the demo to play with it.";
+  if (!live) stopDriving(false);
+}
+const detail = (t) => { $("detail").textContent = t; };
+
+// ---------------------------------------------------------------------
+//  Bluetooth (Web Bluetooth, Chrome/Edge)
+// ---------------------------------------------------------------------
+async function connectBle() {
+  if (!navigator.bluetooth) {
+    detail("This browser can't use Bluetooth. Open the page in Chrome or Edge via serve.py (http://localhost).");
+    return;
+  }
+  setMode("searching");
+  detail("Pick RobotRover in the browser's device list.");
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [NUS_SERVICE] }, { name: "RobotRover" }],
+      optionalServices: [NUS_SERVICE],
+    });
+    setMode("connecting");
+    detail("Connecting…");
+    device.addEventListener("gattserverdisconnected", onBleDisconnected);
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(NUS_SERVICE);
+    rxChar = await service.getCharacteristic(NUS_RX);
+    try {
+      const tx = await service.getCharacteristic(NUS_TX);
+      tx.addEventListener("characteristicvaluechanged", (e) => addLog(dec.decode(e.target.value)));
+      await tx.startNotifications();
+    } catch (e) {
+      detail("Connected, but replies aren't available.");
+    }
+    setMode("connected");
+    detail("Hold an arrow (or W/A/S/D) to drive.");
+  } catch (e) {
+    rxChar = null;
+    if (device && device.gatt.connected) device.gatt.disconnect();
+    setMode("offline");
+    detail(e.name === "NotFoundError" ? "No robot picked." : `Couldn't connect: ${e.message}`);
+  }
+}
+
+function disconnectBle() {
+  stopDriving();
+  queue.length = 0;
+  if (device) {
+    device.removeEventListener("gattserverdisconnected", onBleDisconnected);
+    if (device.gatt.connected) device.gatt.disconnect();
+  }
+  device = null; rxChar = null; inFlight = false;
+  setMode("offline");
+  detail("Disconnected.");
+}
+
+function onBleDisconnected() {
+  queue.length = 0; rxChar = null; inFlight = false;
+  setMode("offline");
+  detail("Connection lost. Click connect to retry.");
+}
+
+// One write at a time. Queued commands of the same kind are merged so the
+// robot gets the newest value instead of a backlog.
+const queue = [];
+let inFlight = false;
+
+function send(command, kind = command) {
+  if (mode === "demo") { demoReceive(command); return; }
+  if (mode !== "connected" || !rxChar) return;
+  shadow(command);   // keep the matrix preview in step with the real robot
+  for (let i = queue.length - 1; i >= 0; i--) if (queue[i].kind === kind) queue.splice(i, 1);
+  if (queue.length >= 20) queue.shift();
+  queue.push({ kind, command });
+  pump();
+}
+
+async function pump() {
+  if (inFlight || !rxChar || !queue.length) return;
+  const { command } = queue.shift();
+  inFlight = true;
+  try {
+    const data = enc.encode(command + "\n");
+    if (rxChar.writeValueWithResponse) await rxChar.writeValueWithResponse(data);
+    else await rxChar.writeValue(data);
+  } catch (e) {
+    addLog(`error: ${e.message}`);
+  } finally {
+    inFlight = false;
+    pump();
+  }
+}
+
+// ---------------------------------------------------------------------
+//  Demo mode: behaves like relay + sketch, no hardware needed
+// ---------------------------------------------------------------------
+const demo = {
+  speed: 180,
+  joints: {
+    base:     { name: "base",     min: 0,  max: 180, home: 90, target: 90, current: 90 },
+    shoulder: { name: "shoulder", min: 15, max: 165, home: 90, target: 90, current: 90 },
+    elbow:    { name: "elbow",    min: 15, max: 165, home: 90, target: 90, current: 90 },
+    grip:     { name: "gripper",  min: GRIP_OPEN, max: GRIP_CLOSED, home: GRIP_OPEN, target: GRIP_OPEN, current: GRIP_OPEN },
+  },
+};
+
+// Like updateArm() in the sketch: servos move 1 degree every 15 ms
+const SERVO_STEP_MS = 15;
+let armClock = performance.now();
+setInterval(() => {
+  const now = performance.now();
+  const steps = Math.floor((now - armClock) / SERVO_STEP_MS);
+  if (steps <= 0) return;
+  armClock += steps * SERVO_STEP_MS;
+  for (const j of Object.values(demo.joints)) {
+    const d = j.target - j.current;
+    j.current += Math.sign(d) * Math.min(Math.abs(d), steps);
+  }
+}, SERVO_STEP_MS);
+
+const normalize = (raw) => raw.trim().toLowerCase().split(/\s+/).join(" ");
+
+function demoReceive(raw) {
+  const line = normalize(raw);
+  if (!line) return;
+  // Relay check first, like the real board
+  const reply = ALLOWED.test(line) ? demoSketch(line) : `rejected: ${line.slice(0, 40)}`;
+  setTimeout(() => addLog(reply), 15 + Math.random() * 25);   // a little Bluetooth-ish delay
+}
+
+// Connected to a real robot: run the same model silently, only for the matrix preview
+function shadow(raw) {
+  const line = normalize(raw);
+  if (ALLOWED.test(line)) demoSketch(line);
+}
+
+// Port of handleCommand() in RobotRover.ino
+function demoSketch(line) {
+  const [cmd, num] = line.split(" ");
+  const has = num !== undefined, value = has ? parseInt(num, 10) : 0;
+  LM.onCommand(cmd, has, value);
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const setJoint = (j, angle) => {
+    const c = clamp(angle, j.min, j.max);
+    j.target = c;
+    return `${j.name} -> ${c}` + (c !== angle ? ` (limit ${j.min}-${j.max})` : "");
+  };
+  const J = demo.joints;
+  switch (cmd) {
+    case "w": return "forward";
+    case "s": return "backward";
+    case "a": return "spin left";
+    case "d": return "spin right";
+    case "x": case "stop": return "stopped";
+    case "speed": demo.speed = clamp(value, 0, 255); return `speed ${demo.speed}`;
+    case "base": case "shoulder": case "elbow": case "grip": return setJoint(J[cmd], value);
+    case "open": J.grip.target = GRIP_OPEN; return "gripper opening";
+    case "close": J.grip.target = GRIP_CLOSED; return "gripper closing";
+    case "home": for (const j of Object.values(J)) j.target = j.home; return "arm going home";
+    case "pos": return Object.values(J).map((j) => `${j.name} ${j.target}`).join(" ") + ` speed ${demo.speed}`;
+  }
+  return `unknown: ${line}`;
+}
+
+// ---------------------------------------------------------------------
+//  Log
+// ---------------------------------------------------------------------
+const logLines = [];
+function addLog(text, you = false) {
+  logLines.push({ text: text.trim(), you });
+  while (logLines.length > LOG_LINES) logLines.shift();
+  const log = $("log");
+  log.textContent = "";
+  logLines.forEach((l, i) => {
+    const div = document.createElement("div");
+    const newest = i === logLines.length - 1;
+    div.textContent = (l.you ? "you › " : newest ? "› " : "  ") + l.text;
+    if (l.you) div.className = "you"; else if (newest) div.className = "new";
+    log.appendChild(div);
+  });
+}
+
+// ---------------------------------------------------------------------
+//  Driving: hold to drive, short repeated pulses
+// ---------------------------------------------------------------------
+let held = null, driveTimer = null;
+
+function startDriving(cmd) {
+  if (held === cmd) return;
+  held = cmd;
+  document.querySelectorAll(".drv").forEach((b) => b.classList.toggle("on", b.dataset.cmd === cmd));
+  clearInterval(driveTimer);
+  const pulse = () => send(`${cmd} ${DRIVE_PULSE_MS}`, "drive");
+  pulse();
+  driveTimer = setInterval(pulse, DRIVE_REPEAT_MS);
+}
+
+function stopDriving(sendStop = true) {
+  const was = held !== null;
+  held = null;
+  clearInterval(driveTimer);
+  document.querySelectorAll(".drv").forEach((b) => b.classList.remove("on"));
+  if (sendStop && (was || mode === "connected" || mode === "demo")) send("x", "drive");
+}
+
+document.querySelectorAll(".drv").forEach((b) => {
+  b.addEventListener("pointerdown", (e) => { b.setPointerCapture(e.pointerId); startDriving(b.dataset.cmd); });
+  b.addEventListener("pointerup", () => stopDriving());
+  b.addEventListener("pointercancel", () => stopDriving());
+});
+$("stopBtn").addEventListener("click", () => stopDriving());
+
+// Safety: stop if the window loses focus or is hidden
+window.addEventListener("blur", () => { if (held) stopDriving(); });
+document.addEventListener("visibilitychange", () => { if (document.hidden && held) stopDriving(); });
+
+// ---------------------------------------------------------------------
+//  Sliders + arm buttons
+// ---------------------------------------------------------------------
+function updateGripToggle(angle) {
+  const open = angle < (GRIP_OPEN + GRIP_CLOSED) / 2;
+  $("openBtn").classList.toggle("sel", open);
+  $("closeBtn").classList.toggle("sel", !open);
+}
+
+function showValue(slider) {
+  const v = slider.value;
+  if (slider.id === "speed") $("speedPill").textContent = `Speed ${v}`;
+  else $(`v-${slider.id}`).textContent = `${v}°`;
+  if (slider.id === "grip") updateGripToggle(+v);
+}
+
+document.querySelectorAll("input[type=range]").forEach((s) => {
+  let last = 0;
+  s.addEventListener("input", () => {
+    showValue(s);
+    const now = performance.now();
+    if (now - last >= SLIDER_SEND_MS) { last = now; send(`${s.dataset.cmd} ${s.value}`, s.dataset.cmd); }
+  });
+  s.addEventListener("change", () => send(`${s.dataset.cmd} ${s.value}`, s.dataset.cmd));
+});
+
+function setSlider(id, v) { const s = $(id); s.value = v; showValue(s); }
+function gripOpen()  { send("open", "grip");  setSlider("grip", GRIP_OPEN); }
+function gripClose() { send("close", "grip"); setSlider("grip", GRIP_CLOSED); }
+function goHome()    { send("home"); for (const [id, v] of Object.entries(HOME)) setSlider(id, v); }
+$("openBtn").addEventListener("click", gripOpen);
+$("closeBtn").addEventListener("click", gripClose);
+$("homeBtn").addEventListener("click", goHome);
+
+// ---------------------------------------------------------------------
+//  Keyboard
+// ---------------------------------------------------------------------
+const DRIVE_KEYS = { w: "w", arrowup: "w", s: "s", arrowdown: "s", a: "a", arrowleft: "a", d: "d", arrowright: "d" };
+const live = () => mode === "connected" || mode === "demo";
+
+document.addEventListener("keydown", (e) => {
+  const typing = e.target instanceof Element && e.target.closest("input:not([type=range]), textarea");
+  if (typing || e.ctrlKey || e.metaKey || e.altKey || !live()) return;
+  const k = e.key.toLowerCase();
+  if (DRIVE_KEYS[k]) { e.preventDefault(); if (!e.repeat) startDriving(DRIVE_KEYS[k]); return; }
+  if (e.repeat) return;
+  if (k === " ") { e.preventDefault(); stopDriving(); }
+  else if (k === "o") gripOpen();
+  else if (k === "c") gripClose();
+  else if (k === "h") goHome();
+});
+document.addEventListener("keyup", (e) => {
+  const cmd = DRIVE_KEYS[e.key.toLowerCase()];
+  if (cmd && held === cmd) stopDriving();
+});
+
+// ---------------------------------------------------------------------
+//  Console: type any command
+// ---------------------------------------------------------------------
+$("consoleForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = $("consoleInput");
+  const cmd = input.value.trim();
+  if (!cmd) return;
+  if (!live()) { detail("Connect or start the demo first."); return; }
+  addLog(cmd, true);
+  send(cmd.toLowerCase(), `console:${cmd}`);
+  input.value = "";
+});
+
+// ---------------------------------------------------------------------
+//  Header buttons
+// ---------------------------------------------------------------------
+$("connectBtn").addEventListener("click", () => {
+  if (mode === "offline") connectBle(); else disconnectBle();
+});
+$("demoBtn").addEventListener("click", () => {
+  if (mode === "demo") { stopDriving(); setMode("offline"); detail("Demo ended."); }
+  else { setMode("demo"); detail("Demo mode: commands go to a simulated robot. Nothing is sent over Bluetooth."); }
+});
+
+// ---------------------------------------------------------------------
+//  LED matrix preview: line-for-line port of RobotMatrix.h
+//  (keep the two in sync if you change shapes or timings)
+// ---------------------------------------------------------------------
+const LM = (() => {
+  const W = 13, H = 8, MAX = 7, FRAME_MS = 40, REACT_MS = 2500;
+  const frame = new Uint8Array(W * H);
+  const t0 = performance.now();
+  const millis = () => Math.floor(performance.now() - t0);
+  const lround = (v) => Math.sign(v) * Math.round(Math.abs(v));   // C lroundf: halves away from zero
+  const constrain = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+  let event = "none", eventJoint = 0, eventAt = 0, mood = "neutral", lookX = 0, lookY = 0, lastFrame = -FRAME_MS;
+
+  function px(x, y, v) {
+    if (x < 0 || x >= W || y < 0 || y >= H) return;
+    const i = y * W + x;
+    if (v > frame[i]) frame[i] = v;
+  }
+  function pattern(rows, v) {
+    rows.forEach((r, y) => {
+      for (let x = 0; x < W && x < r.length; x++) {
+        const c = r[x];
+        if (c === "#") px(x, y, v);
+        else if (c >= "1" && c <= "7") px(x, y, +c);
+      }
+    });
+  }
+  function line(x0, y0, x1, y1, v) {
+    const n = Math.trunc(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) * 2) + 1;
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      px(lround(x0 + (x1 - x0) * t), lround(y0 + (y1 - y0) * t), v);
+    }
+  }
+  const LETTERS = {
+    B: ["##.", "#.#", "##.", "#.#", "##."],
+    S: ["###", "#..", "###", "..#", "###"],
+    E: ["###", "#..", "##.", "#..", "###"],
+  };
+  function letter(c, ox, oy, v) {
+    LETTERS[c].forEach((r, y) => { for (let x = 0; x < 3; x++) if (r[x] === "#") px(ox + x, oy + y, v); });
+  }
+
+  // ---- icons ----
+  function chevrons(dir, now) {
+    const phase = Math.floor(now / 100) % 5;
+    for (let j = -1; j < 4; j++) {
+      const o = j * 5 - phase + 2;
+      for (let k = 0; k < 4; k++) {
+        if (dir <= 1) {
+          let y = o + k;
+          if (dir === 1) y = (H - 1) - y;
+          px(6 - k, y, MAX); px(6 + k, y, MAX);
+        } else {
+          let x = o + k;
+          if (dir === 3) x = (W - 1) - x;
+          px(x, 3 - k, MAX); px(x, 4 + k, MAX);
+        }
+      }
+    }
+  }
+  function stopSign(now) {
+    pattern([".....###.....", "....#####....", "...#######...", "...#######...",
+             "...#######...", "...#######...", "....#####....", ".....###....."],
+            (Math.floor(now / 200) % 2) ? 3 : MAX);
+  }
+  function jointDial(joint, angle) {
+    letter("BSE"[joint], 0, 1, MAX);
+    const cx = 8, cy = 7, r = 4;
+    for (let a = 0; a <= 180; a += 15) {
+      const rad = a * Math.PI / 180;
+      px(lround(cx + r * Math.cos(rad)), lround(cy - r * Math.sin(rad)), 2);
+    }
+    const rad = angle * Math.PI / 180;
+    line(cx, cy, cx + r * Math.cos(rad), cy - r * Math.sin(rad), MAX);
+  }
+  function claw(gripAngle) {
+    const gap = lround(4 - 3 * (constrain(gripAngle, 30, 120) - 30) / 90);
+    for (let y = 0; y < 4; y++) { px(6 - gap - 1, y, MAX); px(6 + gap + 1, y, MAX); }
+    px(6 - gap, 0, MAX); px(6 + gap, 0, MAX);
+    for (let x = 6 - gap - 1; x <= 6 + gap + 1; x++) px(x, 4, MAX);
+    for (let y = 5; y < H; y++) px(6, y, MAX);
+  }
+  function house() {
+    pattern(["......#......", ".....###.....", "....#####....", "...#######...",
+             "..#########..", "...#.....#...", "...#..##.#...", "...#######..."], MAX);
+  }
+  function speedBar(speed, now) {
+    const len = lround(13 * constrain(speed, 0, 255) / 255);
+    for (let x = 0; x < W; x++) { px(x, 3, x < len ? MAX : 1); px(x, 4, x < len ? MAX : 1); }
+    const off = Math.floor(now * (speed + 1) / 20000) % W;
+    for (let k = 0; k < 3; k++) { px((off + k * 5) % W, 1, 5); px((off + k * 5) % W, 6, 5); }
+  }
+  function question() {
+    pattern([".....###.....", "....#...#....", "........#....", ".......#.....",
+             "......#......", "......#......", ".............", "......#......"], MAX);
+  }
+
+  // ---- face ----
+  function face(m, dx, dy, blink) {
+    [3, 9].forEach((ex, e) => {
+      const squint = m === "squint" || (m === "confused" && e === 0);
+      if (m === "happy") { px(ex - 1, 3, MAX); px(ex, 2, MAX); px(ex + 1, 3, MAX); }
+      else if (squint || blink) { for (let x = ex - 1; x <= ex + 1; x++) px(x, 3, blink ? 5 : MAX); }
+      else {
+        for (let y = 1; y <= 4; y++) for (let x = ex - 1; x <= ex + 1; x++) px(x, y, m === "wide" ? 3 : 2);
+        px(ex + dx, 2 + dy, MAX); px(ex + dx, 3 + dy, MAX);
+      }
+    });
+    if (m === "happy") { px(4, 5, 7); px(5, 6, 7); px(6, 6, 7); px(7, 6, 7); px(8, 5, 7); }
+    else if (m === "wide") { px(6, 5, 6); px(5, 6, 6); px(7, 6, 6); px(6, 7, 6); }
+    else if (m === "confused") { px(4, 6, 5); px(5, 5, 5); px(6, 6, 5); px(7, 5, 5); px(8, 6, 5); }
+    else { px(5, 6, 4); px(6, 6, 4); px(7, 6, 4); }
+  }
+  function idleFace(now) {
+    const blink = (now % 4000) < 150;
+    const g = now % 9000;
+    const dx = (g >= 6000 && g < 6800) ? -1 : (g >= 6800 && g < 7600) ? 1 : 0;
+    face("neutral", dx, 0, blink);
+  }
+
+  function iconDuration(e) {
+    if (["fwd", "back", "left", "right"].includes(e)) return 600;
+    if (e === "stop") return 700;
+    if (["joint", "grip", "speed", "home"].includes(e)) return 1200;
+    if (e === "unknown") return 1500;
+    return 0;
+  }
+
+  function onCommand(cmd, hasValue, value) {
+    let e = "unknown", m = "neutral", lx = 0, ly = 0;
+    if (cmd === "w") { e = "fwd"; ly = -1; }
+    else if (cmd === "s") { e = "back"; ly = 1; }
+    else if (cmd === "a") { e = "left"; lx = -1; }
+    else if (cmd === "d") { e = "right"; lx = 1; }
+    else if (cmd === "x" || cmd === "stop") { e = "stop"; m = "wide"; }
+    else if (cmd === "base" && hasValue) { e = "joint"; eventJoint = 0; lx = value > 100 ? -1 : (value < 80 ? 1 : 0); }
+    else if ((cmd === "shoulder" || cmd === "elbow") && hasValue) { e = "joint"; eventJoint = cmd === "shoulder" ? 1 : 2; ly = value > 90 ? -1 : 1; }
+    else if (cmd === "grip" && hasValue) { e = "grip"; m = value >= 75 ? "squint" : "wide"; }
+    else if (cmd === "open") { e = "grip"; m = "wide"; }
+    else if (cmd === "close") { e = "grip"; m = "squint"; }
+    else if (cmd === "home") { e = "home"; m = "happy"; }
+    else if (cmd === "speed" && hasValue) { e = "speed"; m = value > 200 ? "wide" : "neutral"; }
+    else if (cmd === "pos" || cmd === "help" || cmd === "?") { e = "pos"; lx = 1; ly = -1; }
+    else { m = "confused"; }
+    event = e; mood = m; lookX = lx; lookY = ly; eventAt = millis();
+  }
+
+  // Returns the new frame, or null if it isn't time for one yet
+  function update(angles, speed) {
+    const now = millis();
+    if (now - lastFrame < FRAME_MS) return null;
+    lastFrame = now;
+    frame.fill(0);
+    const since = now - eventAt, iconMs = iconDuration(event);
+    if (event !== "none" && since < iconMs) {
+      switch (event) {
+        case "fwd": chevrons(0, now); break;
+        case "back": chevrons(1, now); break;
+        case "left": chevrons(2, now); break;
+        case "right": chevrons(3, now); break;
+        case "stop": stopSign(now); break;
+        case "joint": jointDial(eventJoint, angles[eventJoint]); break;
+        case "grip": claw(angles[3]); break;
+        case "home": house(); break;
+        case "speed": speedBar(speed, now); break;
+        case "unknown": question(); break;
+      }
+    } else if (event !== "none" && since < iconMs + REACT_MS) {
+      face(mood, lookX, lookY, false);
+    } else {
+      idleFace(now);
+    }
+    return frame;
+  }
+
+  return { onCommand, update, W, H };
+})();
+
+// Draw the preview
+const matrixCells = [];
+for (let i = 0; i < LM.W * LM.H; i++) {
+  const s = document.createElement("span");
+  $("matrix").appendChild(s);
+  matrixCells.push(s);
+}
+function renderMatrix() {
+  const J = demo.joints;
+  const f = LM.update([J.base.current, J.shoulder.current, J.elbow.current, J.grip.current], demo.speed);
+  if (f) {
+    for (let i = 0; i < f.length; i++) {
+      const v = f[i];
+      matrixCells[i].style.background = v ? `rgba(77,163,255,${(0.22 + 0.78 * v / 7).toFixed(2)})` : "#1b2233";
+    }
+  }
+}
+setInterval(renderMatrix, 20);   // LM.update itself limits this to one frame every 40 ms
+
+setMode("offline");
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+[Unit]
+Description=RobotRover Bluetooth relay (phone -> sketch)
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+ExecStartPre=-/usr/bin/bluetoothctl power on
+ExecStart=/opt/robot-ble/venv/bin/python /opt/robot-ble/robot_ble_bridge.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

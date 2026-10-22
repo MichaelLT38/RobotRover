@@ -1,0 +1,16 @@
+# Normalize text files in the repo
+* text=auto
+
+# These run on the UNO Q's Linux side or in a Unix shell: always LF, even on Windows checkouts
+*.sh      text eol=lf
+*.py      text eol=lf
+*.service text eol=lf
+android/gradlew text eol=lf
+
+# Windows scripts
+*.bat text eol=crlf
+
+# Binary files
+*.pdf binary
+*.jar binary
+*.png binary
