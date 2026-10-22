@@ -23,15 +23,22 @@ android/, desktop/                      board/              UNO Q Linux        R
 The UNO Q's Bluetooth radio is on its Linux side, so a small Python relay there
 receives commands and passes them to the sketch through Arduino's Bridge.
 
-| Path | What it is |
-|---|---|
-| `RobotRover.ino` | The sketch: commands, wheels, servos, Bridge registration |
-| `RobotMatrix.h` | LED matrix icons and robot face (part of the sketch) |
-| `board/` | Bluetooth relay (`robot_ble_bridge.py`) plus two ways to install it |
-| `android/` | Android app (Kotlin, no third-party libraries) |
-| `desktop/` | Same controller for a PC browser, with keyboard, console, demo mode and matrix preview |
-| `RobotRover_System_Guide.pdf` | Full documentation |
-| `images/` | App mockup, board pinout and wiring diagram used here and in the PDF |
+| Path | What it is | Written in | Builds into | Runs on |
+|---|---|---|---|---|
+| `RobotRover.ino`, `RobotMatrix.h` | The sketch: commands, wheels, servos, Bridge registration, LED matrix face and icons | C++, ~660 lines | Firmware via `arduino-cli` (~120 KB) | UNO Q microcontroller (STM32U585) |
+| `board/` | Bluetooth relay (`robot_ble_bridge.py`) plus two ways to install it | Python, ~220 lines | Nothing; copied to the board | UNO Q Linux side |
+| `android/` | Android app, no third-party libraries | Kotlin, ~630 lines, plus ~970 lines of XML screens and icons | `app-debug.apk` via Gradle (~840 KB) | Android 8+ phone |
+| `desktop/` | Same controller for a PC browser, with keyboard, console, demo mode and matrix preview | JavaScript, ~540 lines | Nothing; `serve.py` serves it | Chrome or Edge on a PC |
+| `docs/build_pdf.py` | Generates the PDF guide | Python, ~1,250 lines | `RobotRover_System_Guide.pdf` | Any PC with Python 3 |
+| `RobotRover_System_Guide.pdf` | Full documentation | – | – | – |
+| `images/` | App mockup, board pinout and wiring diagram used here and in the PDF | – | – | – |
+
+*Line counts are rounded, from the first release (commit e986fe6). Section 10 of the PDF has the
+full code map.*
+
+**Not in this repo:** build outputs (the APK and firmware), the relay's bundled Python packages
+(download command in install step 2), Arduino's `arduino-router` (comes with the board),
+`android/local.properties` (specific to each PC), and the HTML used to render the app and wiring images.
 
 ---
 
@@ -225,6 +232,21 @@ relay autostart after a reboot. See Section 7 of the PDF.
 
 Changing joint limits, home angles, Bluetooth UUIDs or timings? Several files must agree.
 See "Values that must match across seams" in Section 4 of the PDF.
+
+## Rebuilding the PDF guide
+
+The PDF is generated from `docs/build_pdf.py`. After changing it, rebuild with:
+
+```bash
+pip install reportlab
+```
+
+```bash
+python docs/build_pdf.py
+```
+
+It writes `RobotRover_System_Guide.pdf` in the repo root, using `images/app_mockup.png` and
+`images/wiring.png`; every other figure is drawn by the script.
 
 ## Security
 
