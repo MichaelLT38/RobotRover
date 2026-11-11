@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  RobotRover wiring diagram: Arduino UNO Q + TB6612FNG + PCA9685, single 2S battery.
+  Hand-written source for images/wiring.png. Render it at exactly width x height
+  (2299 x 1690) with Microsoft Edge headless: flags headless=new, disable-gpu,
+  hide-scrollbars, force-device-scale-factor=1, window-size=2299,1690 and
+  screenshot=<abs path to wiring.png>, then the file:/// URL of this SVG.
+  (Flags are written without their leading double dash: XML comments can't contain one.)
+
+  Conventions
+    - Wires are right-angle polylines. A dot means wires are joined; wires that cross
+      without a dot are not connected.
+    - Pin rows: a pin's wire meets the board edge at the row's y; its label baseline is y + 8.
+    - Colors: blue = left wheel, pink = right wheel, purple = I2C (dashed = servo cables),
+      orange = 3.3 V logic, red = battery / power, black = ground, teal = battery sense (A0).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="2299" height="1690" viewBox="0 0 2299 1690">
+  <style>
+    text { font-family: "Segoe UI", Arial, sans-serif; fill: #1f2430; }
+    .title { font-size: 30px; font-weight: 700; }
+    .sub   { font-size: 22px; fill: #5b6472; }
+    .pin   { font-size: 24px; }
+    .note  { font-size: 22px; fill: #5b6472; }
+    .small { font-size: 20px; fill: #5b6472; }
+    .muted { font-size: 24px; fill: #8b93a1; }
+    .sign  { font-size: 24px; font-weight: 700; }
+    .warn  { font-size: 20px; fill: #a5281b; font-weight: 600; }
+    .tealtext { font-size: 22px; fill: #0f8f7a; font-weight: 600; }
+
+    .board { fill: #f7f8fa; stroke: #2e3541; stroke-width: 3; }
+    .uno   { fill: #e3f1f2; stroke: #057582; stroke-width: 3; }
+    .power { fill: #fdedee; stroke: #c0392b; stroke-width: 3; }
+    .servo { fill: #efe9fc; stroke: #6d28d9; stroke-width: 2; }
+    .part  { fill: #ffffff; stroke: #2e3541; stroke-width: 2.5; }
+
+    .w      { fill: none; stroke-width: 5; }
+    .blue   { stroke: #2563eb; }
+    .pink   { stroke: #db2777; }
+    .purple { stroke: #6d28d9; }
+    .orange { stroke: #e8892e; }
+    .red    { stroke: #c0392b; }
+    .black  { stroke: #111111; }
+    .teal   { stroke: #0f8f7a; }
+    .dash   { stroke-width: 4; stroke-dasharray: 16 8; stroke-linecap: round; }
+  </style>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="2299" height="1690" fill="#ffffff"/>
+
+  <!-- ================================================================== -->
+  <!-- POWER BUS: ground rail (black) and switched battery rail (red).     -->
+  <!-- Both start at the board regulator (left), run across the top, and   -->
+  <!-- drop down the right edge to the servo regulator's inputs.           -->
+  <!-- ================================================================== -->
+  <g id="bus">
+    <polyline class="w black" points="110,180 110,60 2255,60 2255,1311 2170,1311"/>
+    <polyline class="w red"   points="190,180 190,120 2215,120 2215,1251 2170,1251"/>
+    <text class="note" x="560" y="46">ground bus (−)</text>
+    <text class="note" x="560" y="150">battery bus (+), after the main switch</text>
+  </g>
+
+  <!-- ================================================================== -->
+  <!-- 2S Li-ion pack, inline fuse and main switch                          -->
+  <!-- ================================================================== -->
+  <g id="battery">
+    <rect class="power" x="1720" y="280" width="450" height="150" rx="18"/>
+    <text class="title" x="1756" y="327">2S Li-ion pack with BMS</text>
+    <text class="sub"   x="1756" y="364">7.4 V nominal, 8.4 V full</text>
+    <text class="sub"   x="1756" y="396">protected (BMS)</text>
+    <text class="sign"  x="1780" y="272" text-anchor="end">+</text>
+    <text class="sign"  x="2182" y="320">−</text>
+
+    <!-- + lead: pack -> fuse -> switch -> battery bus -->
+    <polyline class="w red" points="1790,280 1790,256"/>
+    <rect class="part" x="1780" y="220" width="20" height="36" rx="2"/>   <!-- fuse -->
+    <line x1="1790" y1="220" x2="1790" y2="256" stroke="#2e3541" stroke-width="2"/>
+    <polyline class="w red" points="1790,220 1790,195"/>
+    <circle class="part" cx="1790" cy="190" r="5"/>                         <!-- switch contacts -->
+    <circle class="part" cx="1790" cy="140" r="5"/>
+    <line x1="1792" y1="186" x2="1816" y2="146" stroke="#2e3541" stroke-width="4" stroke-linecap="round"/>
+    <polyline class="w red" points="1790,135 1790,120"/>
+    <circle cx="1790" cy="120" r="8" fill="#c0392b"/>
+
+    <text class="pin"   x="1830" y="160">main switch</text>
+    <text class="warn"  x="1830" y="187">Use the app's Power off before</text>
+    <text class="warn"  x="1830" y="212">switching off the battery</text>
+    <text class="small" x="1830" y="248">inline fuse (optional)</text>
+
+    <!-- − lead to the ground bus (crosses the red rail, not connected) -->
+    <polyline class="w black" points="2170,330 2255,330"/>
+    <circle cx="2255" cy="330" r="8" fill="#111111"/>
+  </g>
+
+  <!-- ================================================================== -->
+  <!-- 5 V board regulator -> UNO Q 5V / GND                                -->
+  <!-- ================================================================== -->
+  <g id="board-regulator">
+    <rect class="power" x="56" y="180" width="360" height="160" rx="18"/>
+    <text class="title" x="86" y="228">5 V board regulator</text>
+    <text class="sub"   x="86" y="262">buck-boost, 3 A</text>
+    <text class="sign"  x="120" y="172">−</text>
+    <text class="sign"  x="200" y="172">+</text>
+    <text class="pin" x="200" y="326" text-anchor="middle">5V OUT</text>
+    <text class="pin" x="320" y="326" text-anchor="middle">GND</text>
+
+    <polyline class="w red"   points="200,340 200,612"/>
+    <polyline class="w black" points="320,340 320,612"/>
+    <text class="note" x="186" y="470" text-anchor="end">5 V</text>
+  </g>
+
+  <!-- ================================================================== -->
+  <!-- Battery divider: bus -> 20 kΩ -> A0 -> 10 kΩ -> GND                   -->
+  <!-- ================================================================== -->
+  <g id="divider">
+    <polyline class="w red" points="490,120 490,190"/>
+    <circle cx="490" cy="120" r="8" fill="#c0392b"/>
+    <rect class="part" x="480" y="190" width="20" height="72" rx="2"/>     <!-- R1 20 kΩ -->
+    <text class="pin" x="514" y="234">20 kΩ</text>
+    <text class="note" x="514" y="300">8.4 V pack → 2.8 V at A0</text>
+
+    <polyline class="w teal" points="490,262 490,612"/>
+    <polyline class="w black" points="320,530 375,530"/>
+    <rect class="part" x="375" y="520" width="60" height="20" rx="2"/>     <!-- R2 10 kΩ -->
+    <polyline class="w teal" points="435,530 490,530"/>
+    <circle cx="320" cy="530" r="8" fill="#111111"/>
+    <circle cx="490" cy="530" r="8" fill="#0f8f7a"/>
+    <text class="pin" x="405" y="508" text-anchor="middle">10 kΩ</text>
+    <text class="tealtext" x="506" y="420">battery sense</text>
+  </g>
+
+  <!-- ================================================================== -->
+  <!-- Arduino UNO Q                                                       -->
+  <!-- ================================================================== -->
+  <g id="uno-q">
+    <rect class="uno" x="37" y="612" width="500" height="820" rx="18"/>
+    <!-- power pins on the top edge -->
+    <text class="pin" x="200" y="648" text-anchor="middle">5V</text>
+    <text class="pin" x="320" y="648" text-anchor="middle">GND</text>
+    <text class="pin" x="490" y="648" text-anchor="middle">A0</text>
+    <text class="small" x="200" y="674" text-anchor="middle">power in</text>
+    <text class="small" x="522" y="674" text-anchor="end">battery sense</text>
+
+    <text class="title" x="73" y="726">Arduino UNO Q</text>
+    <text class="sub"   x="73" y="764">runs RobotRover.ino + relay</text>
+
+    <!-- signal pins on the right edge -->
+    <text class="pin" x="508" y="739"  text-anchor="end">D5 (PWM)</text>
+    <text class="pin" x="508" y="789"  text-anchor="end">D7</text>
+    <text class="pin" x="508" y="839"  text-anchor="end">D8</text>
+    <text class="pin" x="508" y="909"  text-anchor="end">D6 (PWM)</text>
+    <text class="pin" x="508" y="959"  text-anchor="end">D4</text>
+    <text class="pin" x="508" y="1009" text-anchor="end">D2</text>
+    <text class="pin" x="508" y="1099" text-anchor="end">SDA</text>
+    <text class="pin" x="508" y="1149" text-anchor="end">SCL</text>
+    <text class="pin" x="508" y="1239" text-anchor="end">3.3V</text>
+    <text class="pin" x="508" y="1319" text-anchor="end">GND</text>
+
+    <!-- USB-C connector: optional, for uploads from a PC -->
+    <rect x="20" y="1340" width="53" height="68" rx="6" fill="#a3adae" stroke="#7f8c8d" stroke-width="2"/>
+    <text class="small" x="89" y="1382">USB-C: PC for uploads only (optional)</text>
+  </g>
+
+  <!-- ================================================================== -->
+  <!-- Logic wiring: UNO Q -> TB6612FNG and PCA9685                         -->
+  <!-- ================================================================== -->
+  <g id="logic-wires">
+    <!-- left wheel (blue) -->
+    <polyline class="w blue" points="537,731 657,731 657,471 917,471"/>   <!-- D5 -> PWMA -->
+    <polyline class="w blue" points="537,781 681,781 681,521 917,521"/>   <!-- D7 -> AIN1 -->
+    <polyline class="w blue" points="537,831 705,831 705,571 917,571"/>   <!-- D8 -> AIN2 -->
+    <!-- right wheel (pink) -->
+    <polyline class="w pink" points="537,901 729,901 729,641 917,641"/>   <!-- D6 -> PWMB -->
+    <polyline class="w pink" points="537,951 753,951 753,691 917,691"/>   <!-- D4 -> BIN1 -->
+    <polyline class="w pink" points="537,1001 777,1001 777,741 917,741"/> <!-- D2 -> BIN2 -->
+    <!-- I2C (purple) -->
+    <polyline class="w purple" points="537,1091 801,1091 801,1351 917,1351"/> <!-- SDA -->
+    <polyline class="w purple" points="537,1141 825,1141 825,1401 917,1401"/> <!-- SCL -->
+    <!-- 3.3 V logic (orange): STBY, TB6612 VCC, PCA9685 VCC -->
+    <polyline class="w orange" points="537,1231 849,1231"/>
+    <polyline class="w orange" points="917,811 849,811 849,1251 917,1251"/>
+    <polyline class="w orange" points="849,861 917,861"/>
+    <circle cx="849" cy="861"  r="8" fill="#e8892e"/>
+    <circle cx="849" cy="1231" r="8" fill="#e8892e"/>
+    <text class="note" x="583" y="1219">3.3 V</text>
+    <!-- logic ground (black): TB6612 GND (left), PCA9685 GND (left) -->
+    <polyline class="w black" points="537,1311 873,1311"/>
+    <polyline class="w black" points="917,911 873,911 873,1311"/>
+    <polyline class="w black" points="873,1301 917,1301"/>
+    <circle cx="873" cy="1301" r="8" fill="#111111"/>
+    <text class="note" x="583" y="1299">GND</text>
+  </g>
+
+  <!-- ================================================================== -->
+  <!-- TB6612FNG dual motor driver                                         -->
+  <!-- ================================================================== -->
+  <g id="tb6612">
+    <rect class="board" x="917" y="352" width="420" height="619" rx="18"/>
+    <text class="title" x="1127" y="403" text-anchor="middle">TB6612FNG</text>
+    <text class="sub"   x="1127" y="437" text-anchor="middle">dual motor driver</text>
+    <text class="pin" x="945" y="479">PWMA</text>
+    <text class="pin" x="945" y="529">AIN1</text>
+    <text class="pin" x="945" y="579">AIN2</text>
+    <text class="pin" x="945" y="649">PWMB</text>
+    <text class="pin" x="945" y="699">BIN1</text>
+    <text class="pin" x="945" y="749">BIN2</text>
+    <text class="pin" x="945" y="819">STBY</text>
+    <text class="pin" x="945" y="869">VCC</text>
+    <text class="pin" x="945" y="919">GND</text>
+    <text class="pin" x="1308" y="479" text-anchor="end">VM</text>
+    <text class="pin" x="1308" y="529" text-anchor="end">GND</text>
+    <text class="pin" x="1308" y="629" text-anchor="end">AO1</text>
+    <text class="pin" x="1308" y="679" text-anchor="end">AO2</text>
+    <text class="pin" x="1308" y="789" text-anchor="end">BO1</text>
+    <text class="pin" x="1308" y="839" text-anchor="end">BO2</text>
+
+    <!-- VM straight from the battery bus; GND to the ground bus (crosses the red rail) -->
+    <polyline class="w red"   points="1337,471 1390,471 1390,120"/>
+    <circle cx="1390" cy="120" r="8" fill="#c0392b"/>
+    <polyline class="w black" points="1337,521 1450,521 1450,60"/>
+    <circle cx="1450" cy="60" r="8" fill="#111111"/>
+    <text class="note" x="1478" y="478">VM: straight from the pack, max 13.5 V</text>
+  </g>
+
+  <!-- ================================================================== -->
+  <!-- Wheel motors                                                        -->
+  <!-- ================================================================== -->
+  <g id="motors">
+    <polyline class="w blue" points="1337,621 1617,621 1719,639"/>   <!-- AO1 -->
+    <polyline class="w blue" points="1337,671 1617,671 1719,663"/>   <!-- AO2 -->
+    <polyline class="w pink" points="1337,781 1617,781 1719,803"/>   <!-- BO1 -->
+    <polyline class="w pink" points="1337,831 1617,831 1719,827"/>   <!-- BO2 -->
+    <circle class="board" cx="1777" cy="651" r="60"/>
+    <circle class="board" cx="1777" cy="815" r="60"/>
+    <text class="sign" x="1777" y="660" text-anchor="middle">M</text>
+    <text class="sign" x="1777" y="824" text-anchor="middle">M</text>
+    <text class="note" x="1857" y="643">Left wheel</text>
+    <text class="note" x="1857" y="673">motor</text>
+    <text class="note" x="1857" y="807">Right wheel</text>
+    <text class="note" x="1857" y="837">motor</text>
+  </g>
+
+  <!-- Common ground note -->
+  <g id="ground-note">
+    <text class="note" x="1377" y="958">Common ground: pack (−), both regulators' GND, both TB6612</text>
+    <text class="note" x="1377" y="990">GND pins, PCA9685 GND (both sides), UNO Q GND and the</text>
+    <text class="note" x="1377" y="1022">divider's 10 kΩ all connect together.</text>
+  </g>
+
+  <!-- ================================================================== -->
+  <!-- PCA9685 16-channel servo board                                      -->
+  <!-- ================================================================== -->
+  <g id="pca9685">
+    <rect class="board" x="917" y="1132" width="420" height="500" rx="18"/>
+    <text class="title" x="1127" y="1183" text-anchor="middle">PCA9685</text>
+    <text class="sub"   x="1127" y="1217" text-anchor="middle">16-ch servo board, I2C 0x40</text>
+    <text class="pin" x="945" y="1259">VCC</text>
+    <text class="pin" x="945" y="1309">GND</text>
+    <text class="pin" x="945" y="1359">SDA</text>
+    <text class="pin" x="945" y="1409">SCL</text>
+    <text class="muted" x="945" y="1459">OE (leave open)</text>
+    <text class="pin" x="1308" y="1259" text-anchor="end">V+</text>
+    <text class="pin" x="1308" y="1319" text-anchor="end">GND</text>
+    <text class="pin" x="1308" y="1429" text-anchor="end">ch 0</text>
+    <text class="pin" x="1308" y="1489" text-anchor="end">ch 1</text>
+    <text class="pin" x="1308" y="1549" text-anchor="end">ch 2</text>
+    <text class="pin" x="1308" y="1609" text-anchor="end">ch 3</text>
+
+    <!-- servo power: V+ / GND from the servo regulator, 1000 µF across them -->
+    <polyline class="w red"   points="1337,1251 1737,1251"/>
+    <polyline class="w black" points="1337,1311 1737,1311"/>
+    <text class="note" x="1600" y="1238">5 V</text>
+    <polyline class="w red"   points="1420,1251 1420,1276"/>
+    <polyline class="w black" points="1420,1286 1420,1311"/>
+    <line x1="1400" y1="1276" x2="1440" y2="1276" stroke="#2e3541" stroke-width="4"/>
+    <line x1="1400" y1="1286" x2="1440" y2="1286" stroke="#2e3541" stroke-width="4"/>
+    <circle cx="1420" cy="1251" r="8" fill="#c0392b"/>
+    <circle cx="1420" cy="1311" r="8" fill="#111111"/>
+    <text class="sign" x="1394" y="1278" text-anchor="end" style="font-size:20px">+</text>
+    <text class="pin" x="1452" y="1290">1000 µF</text>
+  </g>
+
+  <!-- ================================================================== -->
+  <!-- 5 V servo regulator (fed from the right-hand riser)                 -->
+  <!-- ================================================================== -->
+  <g id="servo-regulator">
+    <rect class="power" x="1737" y="1112" width="433" height="228" rx="18"/>
+    <text class="title" x="1765" y="1158">5 V servo regulator</text>
+    <text class="sub"   x="1765" y="1192">switching (buck/UBEC)</text>
+    <text class="sub"   x="1765" y="1220">5 A+ (3 A for micro servos)</text>
+    <text class="pin" x="1765" y="1259">5V OUT</text>
+    <text class="pin" x="1765" y="1319">GND</text>
+    <text class="pin" x="2142" y="1259" text-anchor="end">IN +</text>
+    <text class="pin" x="2142" y="1319" text-anchor="end">IN −</text>
+  </g>
+
+  <!-- ================================================================== -->
+  <!-- Servos on channels 0-3                                              -->
+  <!-- ================================================================== -->
+  <g id="servos">
+    <text class="note" x="1430" y="1407">3-pin servo cables</text>
+    <polyline class="w purple dash" points="1337,1421 1737,1421"/>
+    <polyline class="w purple dash" points="1337,1481 1737,1481"/>
+    <polyline class="w purple dash" points="1337,1541 1737,1541"/>
+    <polyline class="w purple dash" points="1337,1601 1737,1601"/>
+    <rect class="servo" x="1737" y="1397" width="433" height="48" rx="10"/>
+    <rect class="servo" x="1737" y="1457" width="433" height="48" rx="10"/>
+    <rect class="servo" x="1737" y="1517" width="433" height="48" rx="10"/>
+    <rect class="servo" x="1737" y="1577" width="433" height="48" rx="10"/>
+    <text class="pin" x="1761" y="1429">Base servo (0–180°)</text>
+    <text class="pin" x="1761" y="1489">Shoulder servo (15–165°)</text>
+    <text class="pin" x="1761" y="1549">Elbow servo (15–165°)</text>
+    <text class="pin" x="1761" y="1609">Gripper servo (30–120°)</text>
+  </g>
+
+  <!-- Legend -->
+  <g id="legend">
+    <circle cx="68" cy="1505" r="8" fill="#111111"/>
+    <text class="small" x="88" y="1512">= wires joined. Wires that cross without a dot are not connected.</text>
+  </g>
+</svg>

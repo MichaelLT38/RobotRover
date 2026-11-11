@@ -11,13 +11,22 @@ android {
         applicationId = "com.bitswizzler.robotrover"
         minSdk = 26          // Android 8.0+
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.2"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+        }
+    }
+
+    // Name the APK RobotRover.apk (RobotRover-release.apk for release builds)
+    // instead of Gradle's default app-debug.apk
+    applicationVariants.all {
+        val suffix = if (buildType.name == "debug") "" else "-${buildType.name}"
+        outputs.all {
+            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl).outputFileName = "RobotRover$suffix.apk"
         }
     }
 

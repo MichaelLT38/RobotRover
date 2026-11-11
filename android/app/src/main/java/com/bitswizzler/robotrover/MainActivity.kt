@@ -3,6 +3,7 @@ package com.bitswizzler.robotrover
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
 import android.bluetooth.BluetoothAdapter
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -129,6 +130,19 @@ class MainActivity : Activity(), RobotBle.Listener {
             seekShoulder.progress = HOME_SHOULDER
             seekElbow.progress = HOME_ELBOW
             seekGrip.progress = GRIPPER_OPEN
+        }
+
+        // The relay shuts the board's Linux side down, so the battery can be switched off safely
+        findViewById<View>(R.id.powerOffButton).setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("Power off the robot?")
+                .setMessage("The board shuts down. Switch the battery off when the LED matrix shows the sleeping face.")
+                .setPositiveButton("Power off") { _, _ ->
+                    stopDriving()
+                    robot.send("poweroff")
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
         }
 
         updateGripperToggle(seekGrip.progress)

@@ -66,6 +66,7 @@
   <header>
     <div class="title"><svg class="i" viewBox="0 0 24 24"><path d="M7 7h10a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2zM12 7V5M9.5 11.5v.01M14.5 11.5v.01M10 15h4M3 11v3M21 11v3"/><circle cx="12" cy="3.5" r="1"/></svg>RobotRover</div>
     <span class="pill"><span class="dot" id="dot"></span><span id="pillText">Offline</span></span>
+    <button class="btn" id="powerBtn" style="display:none">Power off</button>
     <button class="btn" id="demoBtn">Try demo</button>
     <button class="btn primary" id="connectBtn"><svg class="i" viewBox="0 0 24 24"><path d="M7 8l10 8-5 4V4l5 4-10 8"/></svg> Connect to robot</button>
   </header>
@@ -133,7 +134,11 @@ const SLIDER_SEND_MS = 100, LOG_LINES = 10;
 const GRIP_OPEN = 30, GRIP_CLOSED = 120;
 const HOME = { base: 90, shoulder: 90, elbow: 90, grip: GRIP_OPEN };
 // Same allowlist as board/robot_ble_bridge.py
-const ALLOWED = /^(?:(?:w|a|s|d) \d{1,5}|w|a|s|d|x|stop|open|close|home|pos|(?:speed|base|shoulder|elbow|grip) \d{1,3})$/;
+const ALLOWED = /^(?:(?:w|a|s|d) \d{1,5}|w|a|s|d|x|stop|open|close|home|pos|batt|poweroff|(?:speed|base|shoulder|elbow|grip) \d{1,3}|m -?\d{1,3} -?\d{1,3}(?: \d{1,5})?)$/;
+const POWEROFF_REPLY = "powering off: switch off when the face sleeps";   // what the relay says
+// Battery levels, as in the sketch
+const BATT_FULL_V = 8.2, BATT_EMPTY_V = 6.6, DEMO_BATT_V = 7.8;
+const battFill = (v) => Math.min(7, Math.max(0, Math.round((v - BATT_EMPTY_V) / (BATT_FULL_V - BATT_EMPTY_V) * 7)));
 
 const $ = (id) => document.getElementById(id);
 const enc = new TextEncoder(), dec = new TextDecoder();
@@ -169,6 +174,11 @@ function setMode(next) {
     ? "Mirrors what the board's matrix shows for commands sent from here (not ones typed in the Serial Monitor)."
     : "Shows what the board's matrix displays for each command. Try the demo to play with it.";
   if (!live) stopDriving(false);
+  $("powerBtn").style.display = live ? "" : "none";
+  // The demo robot has a healthy pack; a real robot's is learned from its replies
+  if (next === "demo") setDemoBattery("ok", DEMO_BATT_V);
+  else if (next === "connected" || next === "offline") setDemoBattery("none", 0);
+  if (next !== "searching" && next !== "connecting") setDemoPoweringOff(false);
 }
 const detail = (t) => { $("detail").textContent = t; };
 
@@ -195,7 +205,11 @@ async function connectBle() {
     rxChar = await service.getCharacteristic(NUS_RX);
     try {
       const tx = await service.getCharacteristic(NUS_TX);
-      tx.addEventListener("characteristicvaluechanged", (e) => addLog(dec.decode(e.target.value)));
+      tx.addEventListener("characteristicvaluechanged", (e) => {
+        const text = dec.decode(e.target.value);
+        addLog(text);
+        learnFromReply(text);
+      });
       await tx.startNotifications();
     } catch (e) {
       detail("Connected, but replies aren't available.");
@@ -270,7 +284,45 @@ const demo = {
     elbow:    { name: "elbow",    min: 15, max: 165, home: 90, target: 90, current: 90 },
     grip:     { name: "gripper",  min: GRIP_OPEN, max: GRIP_CLOSED, home: GRIP_OPEN, target: GRIP_OPEN, current: GRIP_OPEN },
   },
+  batt: { state: "none", volts: 0 },   // none | ok | low | empty
+  poweringOff: false,
 };
+
+function setDemoBattery(state, volts) {
+  demo.batt = { state, volts };
+  LM.setBattery(state, battFill(volts));
+}
+
+function setDemoPoweringOff(on) {
+  demo.poweringOff = on;
+  LM.setPoweringOff(on);
+}
+
+// Connected to a real robot: keep the preview's battery in step with its replies
+function learnFromReply(text) {
+  const t = text.trim();
+  let m;
+  if ((m = /^battery (\d+(?:\.\d+)?) V (ok|low|empty)$/.exec(t))) setDemoBattery(m[2], +m[1]);
+  else if ((m = /^battery empty (\d+(?:\.\d+)?) V/.exec(t))) setDemoBattery("empty", +m[1]);
+  else if (/^battery (not connected|sensing off)/.test(t)) setDemoBattery("none", 0);
+  else if (/^poweroff (not allowed|failed)/.test(t)) setDemoPoweringOff(false);
+}
+
+function battText() {
+  const b = demo.batt;
+  if (b.state === "none") return "battery not connected";
+  return `battery ${b.volts.toFixed(2)} V ${b.state}`;
+}
+
+const MOVES = ["w", "s", "a", "d", "m", "base", "shoulder", "elbow", "grip", "open", "close", "home"];
+
+// Like tankIcon() in the sketch: the matrix shows "m left right" as the matching arrow
+function tankIcon(left, right) {
+  if (left === 0 && right === 0) return "x";
+  if (left >= 0 && right >= 0) return "w";
+  if (left <= 0 && right <= 0) return "s";
+  return left < right ? "a" : "d";
+}
 
 // Like updateArm() in the sketch: servos move 1 degree every 15 ms
 const SERVO_STEP_MS = 15;
@@ -291,8 +343,11 @@ const normalize = (raw) => raw.trim().toLowerCase().split(/\s+/).join(" ");
 function demoReceive(raw) {
   const line = normalize(raw);
   if (!line) return;
-  // Relay check first, like the real board
-  const reply = ALLOWED.test(line) ? demoSketch(line) : `rejected: ${line.slice(0, 40)}`;
+  // Relay check first, like the real board. The relay answers poweroff itself.
+  let reply;
+  if (!ALLOWED.test(line)) reply = `rejected: ${line.slice(0, 40)}`;
+  else if (line === "poweroff") { demoSketch(line); reply = `${POWEROFF_REPLY} (demo)`; }
+  else reply = demoSketch(line);
   setTimeout(() => addLog(reply), 15 + Math.random() * 25);   // a little Bluetooth-ish delay
 }
 
@@ -306,6 +361,22 @@ function shadow(raw) {
 function demoSketch(line) {
   const [cmd, num] = line.split(" ");
   const has = num !== undefined, value = has ? parseInt(num, 10) : 0;
+  if (cmd === "poweroff") {
+    LM.onCommand(cmd, has, value);
+    if (has && value === 0) { setDemoPoweringOff(false); return "power-off cancelled"; }
+    setDemoPoweringOff(true);
+    return "powering off";
+  }
+  if (demo.poweringOff && MOVES.includes(cmd)) return "powering off";
+  if (demo.batt.state === "empty" && MOVES.includes(cmd)) {
+    LM.onCommand("batt", false, 0);
+    return `battery empty ${demo.batt.volts.toFixed(1)} V, charge me`;
+  }
+  if (cmd === "m") {
+    const [l, r] = line.split(" ").slice(1, 3).map((n) => Math.min(255, Math.max(-255, parseInt(n, 10))));
+    LM.onCommand(tankIcon(l, r), false, 0);
+    return `wheels ${l} ${r}`;
+  }
   LM.onCommand(cmd, has, value);
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const setJoint = (j, angle) => {
@@ -326,6 +397,7 @@ function demoSketch(line) {
     case "close": J.grip.target = GRIP_CLOSED; return "gripper closing";
     case "home": for (const j of Object.values(J)) j.target = j.home; return "arm going home";
     case "pos": return Object.values(J).map((j) => `${j.name} ${j.target}`).join(" ") + ` speed ${demo.speed}`;
+    case "batt": return battText();
   }
   return `unknown: ${line}`;
 }
@@ -458,6 +530,15 @@ $("consoleForm").addEventListener("submit", (e) => {
 $("connectBtn").addEventListener("click", () => {
   if (mode === "offline") connectBle(); else disconnectBle();
 });
+$("powerBtn").addEventListener("click", () => {
+  if (!live()) return;
+  const ok = confirm("Power off the robot?\n\nThe board's Linux side shuts down. Switch the battery off " +
+                     "when the LED matrix shows the sleeping face.");
+  if (!ok) return;
+  stopDriving();
+  addLog("poweroff", true);
+  send("poweroff");
+});
 $("demoBtn").addEventListener("click", () => {
   if (mode === "demo") { stopDriving(); setMode("offline"); detail("Demo ended."); }
   else { setMode("demo"); detail("Demo mode: commands go to a simulated robot. Nothing is sent over Bluetooth."); }
@@ -469,6 +550,7 @@ $("demoBtn").addEventListener("click", () => {
 // ---------------------------------------------------------------------
 const LM = (() => {
   const W = 13, H = 8, MAX = 7, FRAME_MS = 40, REACT_MS = 2500;
+  const LOW_EVERY_MS = 8000, LOW_SHOW_MS = 1000, SAFE_AFTER_MS = 15000;
   const frame = new Uint8Array(W * H);
   const t0 = performance.now();
   const millis = () => Math.floor(performance.now() - t0);
@@ -476,6 +558,7 @@ const LM = (() => {
   const constrain = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
   let event = "none", eventJoint = 0, eventAt = 0, mood = "neutral", lookX = 0, lookY = 0, lastFrame = -FRAME_MS;
+  let battery = "none", battFillPx = 0, poweringOff = false, poweroffAt = 0;
 
   function px(x, y, v) {
     if (x < 0 || x >= W || y < 0 || y >= H) return;
@@ -561,6 +644,22 @@ const LM = (() => {
     pattern([".....###.....", "....#...#....", "........#....", ".......#.....",
              "......#......", "......#......", ".............", "......#......"], MAX);
   }
+  function batteryIcon(fill, blink, now) {
+    if (!blink || Math.floor(now / 500) % 2 === 0) {
+      pattern([".............", "###########..", "#.........#..", "#.........##.",
+               "#.........##.", "#.........#..", "###########..", "............."], MAX);
+    }
+    for (let x = 0; x < constrain(fill, 0, 7); x++) { px(2 + x, 3, MAX); px(2 + x, 4, MAX); }
+  }
+  function powerIcon(now) {
+    pattern(["......#......", "...#..#..#...", "..#...#...#..", "..#.......#..",
+             "..#.......#..", "...#.....#...", "....#####....", "............."],
+            (Math.floor(now / 400) % 2) ? 2 : MAX);
+  }
+  function sleepFace() {
+    pattern(["........####.", "..........#..", ".........#...", "........####.",
+             ".............", "..444...444..", ".............", ".....333....."], MAX);
+  }
 
   // ---- face ----
   function face(m, dx, dy, blink) {
@@ -588,7 +687,7 @@ const LM = (() => {
   function iconDuration(e) {
     if (["fwd", "back", "left", "right"].includes(e)) return 600;
     if (e === "stop") return 700;
-    if (["joint", "grip", "speed", "home"].includes(e)) return 1200;
+    if (["joint", "grip", "speed", "home", "batt"].includes(e)) return 1200;
     if (e === "unknown") return 1500;
     return 0;
   }
@@ -607,10 +706,17 @@ const LM = (() => {
     else if (cmd === "close") { e = "grip"; m = "squint"; }
     else if (cmd === "home") { e = "home"; m = "happy"; }
     else if (cmd === "speed" && hasValue) { e = "speed"; m = value > 200 ? "wide" : "neutral"; }
+    else if (cmd === "batt") { e = "batt"; }
+    else if (cmd === "poweroff") { e = "none"; }
     else if (cmd === "pos" || cmd === "help" || cmd === "?") { e = "pos"; lx = 1; ly = -1; }
     else { m = "confused"; }
+    // A status query doesn't cut short an icon or face reaction that is still showing
+    if (e === "pos" && event !== "none" && millis() - eventAt < iconDuration(event) + REACT_MS) return;
     event = e; mood = m; lookX = lx; lookY = ly; eventAt = millis();
   }
+
+  function setBattery(state, fill) { battery = state; battFillPx = fill; }
+  function setPoweringOff(on) { if (on && !poweringOff) poweroffAt = millis(); poweringOff = on; }
 
   // Returns the new frame, or null if it isn't time for one yet
   function update(angles, speed) {
@@ -619,7 +725,9 @@ const LM = (() => {
     lastFrame = now;
     frame.fill(0);
     const since = now - eventAt, iconMs = iconDuration(event);
-    if (event !== "none" && since < iconMs) {
+    if (poweringOff) {
+      if (now - poweroffAt < SAFE_AFTER_MS) powerIcon(now); else sleepFace();
+    } else if (event !== "none" && since < iconMs) {
       switch (event) {
         case "fwd": chevrons(0, now); break;
         case "back": chevrons(1, now); break;
@@ -630,17 +738,22 @@ const LM = (() => {
         case "grip": claw(angles[3]); break;
         case "home": house(); break;
         case "speed": speedBar(speed, now); break;
+        case "batt": batteryIcon(battFillPx, battery === "empty", now); break;
         case "unknown": question(); break;
       }
+    } else if (battery === "empty") {
+      batteryIcon(battFillPx, true, now);
     } else if (event !== "none" && since < iconMs + REACT_MS) {
       face(mood, lookX, lookY, false);
+    } else if (battery === "low" && now % LOW_EVERY_MS < LOW_SHOW_MS) {
+      batteryIcon(battFillPx, false, now);
     } else {
       idleFace(now);
     }
     return frame;
   }
 
-  return { onCommand, update, W, H };
+  return { onCommand, update, setBattery, setPoweringOff, W, H };
 })();
 
 // Draw the preview

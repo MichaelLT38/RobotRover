@@ -1,7 +1,8 @@
 # RobotRover
 
-Drive an Arduino UNO Q robot (two wheels + a 4-servo arm) from an Android phone or a
-desktop browser over Bluetooth. The board's LED matrix shows what the robot is doing.
+Drive an Arduino UNO Q robot (two wheels + a 4-servo arm) from an Android phone, a
+desktop browser, or an 8BitDo SF30 Pro gamepad paired straight to the board, all over
+Bluetooth. The board's LED matrix shows what the robot is doing.
 Everything here is open source, needs no accounts, and runs offline once installed.
 
 **Full documentation:** [RobotRover_System_Guide.pdf](RobotRover_System_Guide.pdf) covers the
@@ -15,30 +16,30 @@ security and troubleshooting. This README is the quick reference.
 </p>
 
 ```
-Phone app / desktop  --Bluetooth LE-->  relay (Python)  --arduino-router-->  sketch  -->  motors, servos, LED matrix
-android/, desktop/                      board/              UNO Q Linux        RobotRover.ino
-                                        UNO Q Linux side                       UNO Q microcontroller
+Phone app / desktop  --Bluetooth LE------>  relay (Python)  --arduino-router-->  sketch  -->  motors, servos, LED matrix
+8BitDo gamepad       --Bluetooth Classic-->  board/              UNO Q Linux        RobotRover.ino
+android/, desktop/                           UNO Q Linux side                       UNO Q microcontroller
 ```
 
 The UNO Q's Bluetooth radio is on its Linux side, so a small Python relay there
-receives commands and passes them to the sketch through Arduino's Bridge.
+receives commands and passes them to the sketch through Arduino's Bridge. A paired
+gamepad's sticks and buttons become the same commands in the same relay.
 
 | Path | What it is | Written in | Builds into | Runs on |
 |---|---|---|---|---|
-| `RobotRover.ino`, `RobotMatrix.h` | The sketch: commands, wheels, servos, Bridge registration, LED matrix face and icons | C++, ~660 lines | Firmware via `arduino-cli` (~120 KB) | UNO Q microcontroller (STM32U585) |
-| `board/` | Bluetooth relay (`robot_ble_bridge.py`) plus two ways to install it | Python, ~220 lines | Nothing; copied to the board | UNO Q Linux side |
-| `android/` | Android app, no third-party libraries | Kotlin, ~630 lines, plus ~970 lines of XML screens and icons | `app-debug.apk` via Gradle (~840 KB) | Android 8+ phone |
-| `desktop/` | Same controller for a PC browser, with keyboard, console, demo mode and matrix preview | JavaScript, ~540 lines | Nothing; `serve.py` serves it | Chrome or Edge on a PC |
-| `docs/build_pdf.py` | Generates the PDF guide | Python, ~1,250 lines | `RobotRover_System_Guide.pdf` | Any PC with Python 3 |
+| `RobotRover.ino`, `RobotMatrix.h` | The sketch: commands, wheels, servos, battery gauge, Bridge registration, LED matrix face and icons | C++, ~990 lines | Firmware via `arduino-cli` (~125 KB) | UNO Q microcontroller (STM32U585) |
+| `board/` | Bluetooth relay (`robot_ble_bridge.py`, which also handles Power off), gamepad support (`robot_gamepad.py`, `pair-gamepad.sh`), plus two ways to install it | Python, ~740 lines | Nothing; copied to the board | UNO Q Linux side |
+| `android/` | Android app, no third-party libraries | Kotlin, ~640 lines, plus ~980 lines of XML screens and icons | `RobotRover.apk` via Gradle (~860 KB) | Android 8+ phone |
+| `desktop/` | Same controller for a PC browser, with keyboard, console, demo mode and matrix preview | JavaScript, ~650 lines | Nothing; `serve.py` serves it | Chrome or Edge on a PC |
+| `docs/build_pdf.py` | Generates the PDF guide (and the pinout image's SVG) | Python, ~1,480 lines | `RobotRover_System_Guide.pdf` | Any PC with Python 3 |
 | `RobotRover_System_Guide.pdf` | Full documentation | – | – | – |
-| `images/` | App mockup, board pinout and wiring diagram used here and in the PDF | – | – | – |
+| `images/` | App mockup, board pinout and wiring diagram used here and in the PDF, plus the pinout and wiring SVG sources | – | – | – |
 
-*Line counts are rounded, from the first release (commit e986fe6). Section 10 of the PDF has the
-full code map.*
+*Line counts are rounded, from release 1.2. Section 10 of the PDF has the full code map.*
 
 **Not in this repo:** build outputs (the APK and firmware), the relay's bundled Python packages
 (download command in install step 2), Arduino's `arduino-router` (comes with the board),
-`android/local.properties` (specific to each PC), and the HTML used to render the app and wiring images.
+`android/local.properties` (specific to each PC), and the HTML used to render the app mockup.
 
 ---
 
@@ -64,9 +65,13 @@ arduino-cli upload -b arduino:zephyr:unoq -p COM13 .
 (Use your board's port.) **Check:** the LED matrix shows a blinking face, and `pos` in the
 Serial Monitor (line ending "New Line") answers with the joint angles.
 
+**Battery gauge:** once the 20k / 10k divider is wired to A0 (see [Wiring](#wiring)), set
+`BATTERY_SENSE = true` in `RobotRover.ino` and upload again. Compare `batt` with a multimeter on
+the pack and adjust `BATT_CAL` until they agree. Until then `batt` answers "battery sensing off".
+
 ### 2. Bluetooth relay (board's Linux side)
 
-**Option A: offline over USB, no password.** Works even if the board has no internet.
+**Option A: offline over USB.** Works even if the board has no internet.
 Needs `adb` from Android platform-tools.
 
 1. On the PC, download the relay's five Python packages built for the board
@@ -87,7 +92,7 @@ adb push robot-ble/lib /home/arduino/robot-ble/
 ```
 
 ```bash
-adb push board/robot_ble_bridge.py board/run.sh board/keepalive.sh /home/arduino/robot-ble/
+adb push board/robot_ble_bridge.py board/robot_gamepad.py board/run.sh board/keepalive.sh board/pair-gamepad.sh /home/arduino/robot-ble/
 ```
 
 ```bash
@@ -100,9 +105,32 @@ adb shell "cd ~/robot-ble && setsid nohup ./keepalive.sh >/dev/null 2>&1 </dev/n
 
 (The crontab line replaces the `arduino` user's crontab, which is empty on a fresh board.)
 
+3. **Set a password for the `arduino` user.** A fresh board's password is marked expired, and cron
+   skips the `@reboot` job until it's changed, so the relay won't start at boot. In `adb shell` on
+   the board, run Arduino's own tool, type the new password and press Enter (it doesn't ask for
+   the old one, and needs no sudo password):
+
+```bash
+sudo /usr/local/bin/arduino-passwd
+```
+
+   Check with `chage -l arduino`: "Password expires" should say `never`.
+
+4. **Allow Power off** (optional, for the app's Power off button). In `adb shell` on the board, add
+   a sudoers rule that allows only that one command (it asks for the password from step 3):
+
+```bash
+echo 'arduino ALL=(root) NOPASSWD: /usr/bin/systemctl halt' | sudo tee /etc/sudoers.d/robot-poweroff
+```
+
+```bash
+sudo chmod 440 /etc/sudoers.d/robot-poweroff && sudo visudo -c
+```
+
 **Option B: standard install (board has internet).** Copy the `board` folder to the board
 and run `bash setup.sh`. It uses apt and pip, installs to `/opt/robot-ble`, and runs the
-relay as a root systemd service (`robot-ble-bridge`). It asks for the sudo password.
+relay as a root systemd service (`robot-ble-bridge`). It asks for the sudo password. Running
+as root, the relay can power the board off without the sudoers rule.
 
 **Check** (Option A paths shown):
 
@@ -113,12 +141,20 @@ adb shell "cd ~/robot-ble && ./run.sh --send pos"
 It should print `base 90 shoulder 90 elbow 90 gripper 30 speed 180`, and
 `~/robot-ble/relay.log` should say `Advertising as 'RobotRover'`.
 
+**After a reboot:** a Linux-only reboot leaves the microcontroller running but registered with
+the old router, so the sketch can't be reached. The relay notices this (it waits 20 s after
+starting), restarts the sketch through Arduino's `/opt/openocd/bin/arduino-reset.sh`, and logs
+`sketch is back`. To do it by hand: `adb shell "cd ~/robot-ble && ./run.sh --reset-mcu"`.
+
 To update the relay after editing `board/robot_ble_bridge.py`, push the file and stop the
 running copy. `keepalive.sh` restarts it with the new code within a few seconds:
 
 ```bash
 adb push board/robot_ble_bridge.py /home/arduino/robot-ble/ && adb shell "pkill -f '[r]obot_ble_bridge.py'"
 ```
+
+(In Git Bash on Windows, put `MSYS_NO_PATHCONV=1` in front of `adb push`, or the board path
+gets rewritten into a Windows path.)
 
 ### 3. Android app
 
@@ -133,7 +169,8 @@ Build it with Android Studio (**Build → Build APK(s)**), or without Android St
 cd android && ./gradlew.bat assembleDebug
 ```
 
-3. The APK is `android/app/build/outputs/apk/debug/app-debug.apk`. Plug the phone in with
+3. The APK is `android/app/build/outputs/apk/debug/RobotRover.apk` (a debug build, signed with
+   this PC's automatic debug key, which is fine for installing it yourself). Plug the phone in with
    **File transfer** on and copy the APK to its **Download** folder.
 4. On the phone: **Files → Downloads**, tap the APK, allow **Install unknown apps** for Files,
    tap **Install**, and choose **Install anyway** if Play Protect warns.
@@ -157,12 +194,65 @@ The console sends any command, and the LED matrix card previews the board's disp
 ## Using it
 
 - **Driving:** hold an arrow to drive, let go to stop. While held, the controller sends a
-  400 ms drive pulse every 150 ms, so if the link drops the wheels stop on their own.
-- **Arm:** sliders move the joints. Open / Close / Home do what they say.
+  400 ms drive pulse every 150 ms, so if the link drops the wheels stop on their own. The
+  wheels ease up to speed over about 150 ms; stopping is instant.
+- **Arm:** sliders move the joints. Open / Close / Home do what they say. At power-on the
+  servos go to home one at a time. The open gripper goes limp after 3 s idle (so it can be
+  moved by hand) and holds again on its next command; the other joints always hold.
 - **LED matrix:** each command flashes an icon (arrows, stop sign, joint dial, claw,
-  house, speed bar, `?`), then a face reacts for about 2.5 s (looks where you drove,
+  house, speed bar, battery, `?`), then a face reacts for about 2.5 s (looks where you drove,
   squints when the gripper closes, smiles after home). When idle it blinks and glances
-  around. The dial and claw follow the servos' real positions.
+  around. The dial and claw follow the servos' real positions. When the battery is low a
+  battery icon shows for 1 s every 8 s; when it's empty, a blinking empty battery replaces the face.
+- **Battery empty:** below 6.6 V (for 3 s) the wheels stop and every command that moves
+  something is refused with `battery empty 6.5 V, charge me`. Stop, `pos` and `batt` still work.
+- **Power off:** with one battery, the main switch also cuts the board's Linux side. Tap
+  **Power off robot** in the app (or **Power off** on the desktop page) first: the matrix
+  shows a pulsing power symbol, then a sleeping face after 15 s. Then switch the battery off
+  within about half a minute: on USB power the board starts up again by itself about 45 s
+  after Power off (behavior on battery power is still to be checked).
+
+### Gamepad (8BitDo SF30 Pro)
+
+The controller pairs straight to the board's Bluetooth, so it drives the robot without a
+phone. The phone keeps working alongside it.
+
+**Pair it once:**
+
+1. Switch the controller on in **D-input (Android) mode**: hold **Start + B**. (Switch mode
+   won't work; the board lacks its driver.)
+2. Hold **Pair** for 3 s until the lights blink quickly.
+3. On the board, run the pairing script. It looks for up to 2 minutes, then pairs, trusts
+   and connects the controller:
+
+```bash
+adb shell "cd ~/robot-ble && ./pair-gamepad.sh"
+```
+
+After that, switching the controller on in D-input mode connects it to the robot again,
+and `relay.log` says `gamepad connected`. To see what each button sends:
+`adb shell "cd ~/robot-ble && ./run.sh --gamepad-test"`. If a label is wrong, edit `BUTTONS`
+at the top of `board/robot_gamepad.py` and push it again.
+
+| Control | Does |
+|---|---|
+| Left stick | drive: up / down is speed, left / right steers (spins in place), diagonals curve; faster the further you push |
+| Right stick | not used |
+| D-pad left / right | base |
+| D-pad up / down | shoulder |
+| L2 / R2 | elbow down / up |
+| A / B | gripper open / close |
+| L / R | top speed down / up (also sets the phone's speed) |
+| X | battery icon on the matrix |
+| Select | stop |
+| Start | arm home |
+| Hold Start + Select for 3 s | power off |
+
+Driving uses the same safety rule as the phone: short pulses while the stick is pushed, a
+stop when it's released, and a stop if the controller switches off or goes out
+of range. While the gamepad is driving, the phone's drive buttons are ignored
+until half a second after you let go; Stop works from either. For tank controls instead
+(each stick's up / down drives one wheel), set `DRIVE_STYLE = "tank"` in `robot_gamepad.py`.
 
 ### Commands
 
@@ -171,17 +261,22 @@ The same commands work from the phone, the desktop console, the Serial Monitor, 
 | Command | Does |
 |---|---|
 | `w` / `s` / `a` / `d` `[ms]` | forward / back / spin left / spin right (default 1 s, `0` = until stopped) |
+| `m L R [ms]` | tank drive: left and right wheel speed −255 to 255 (what the gamepad sends) |
 | `x` or `stop` | stop wheels |
 | `speed N` | wheel speed 0–255 |
 | `base N`, `shoulder N`, `elbow N`, `grip N` | move a joint to N degrees (clamped to its limits) |
 | `open`, `close`, `home` | gripper open / closed, whole arm to home |
 | `pos` | report positions |
+| `batt` | report the battery, e.g. `battery 7.62 V ok` |
+| `poweroff` | shut the board down (the relay does it; needs the sudoers rule or the root install) |
 
-The relay only forwards these commands. Anything else gets `rejected: ...`.
+The relay only forwards these commands. Anything else gets `rejected: ...`. While powering
+off, commands that move something get `powering off`. From the Serial Monitor, `poweroff 0`
+cancels a power-off.
 
 ## Hardware
 
-![Arduino UNO Q pins used by RobotRover, colored by what they drive: D5, D7 and D8 for the left wheel, D6, D4 and D2 for the right wheel, SDA and SCL for the PCA9685 servo board, 3.3V and GND for logic power and ground](images/board_pinout.png)
+![Arduino UNO Q pins used by RobotRover, colored by what they drive: D5, D7 and D8 for the left wheel, D6, D4 and D2 for the right wheel, SDA and SCL for the PCA9685 servo board, 3.3V and GND for logic power and ground, 5V as the board's power input, and A0 for battery sense](images/board_pinout.png)
 
 *Pins used by RobotRover. The board is drawn to scale (68.6 × 53.3 mm) from Arduino's
 published top view of the UNO Q; small parts are omitted and chip labels are approximate.*
@@ -192,18 +287,34 @@ published top view of the UNO Q; small parts are omitted and chip labels are app
 | Right motor | PWM D6, direction D4 / D2 |
 | PCA9685 servo board | I2C SDA / SCL, address 0x40 |
 | Servos | channel 0 base, 1 shoulder, 2 elbow, 3 gripper |
+| Battery | 2S Li-ion pack with BMS (7.4 V), through a main switch |
+| Servo regulator | pack → 5 V switching regulator (5 A+, or 3 A for micro servos) → PCA9685 V+ |
+| Board regulator | pack → 5 V buck-boost regulator (3 A) → UNO Q **5V** pin |
+| Battery divider | 20k from the pack to **A0**, 10k from A0 to GND |
 
-Power motors and servos from their own batteries, never from the UNO Q's 5 V pin, and
-connect all grounds together. The header pins are 3.3 V.
+One battery powers everything; never power motors or servos from the UNO Q itself.
+Connect all grounds together. The header pins are 3.3 V.
 
 ### Wiring
 
-![Wiring diagram: UNO Q to a TB6612FNG motor driver and a PCA9685 servo board, with separate motor and servo batteries and a USB-C supply for the board](images/wiring.png)
+![Wiring diagram: one 2S Li-ion pack through a main switch feeds the TB6612FNG motor driver directly, a 5 V servo regulator into the PCA9685 servo board, a 5 V buck-boost regulator into the UNO Q's 5V pin, and a 20k/10k divider into A0](images/wiring.png)
 
-- **Never power motors or servos from the UNO Q.** The board runs from a USB-C supply
-  (Arduino specifies 5 V, 3 A); motors (6–9 V into VM) and servos (5–6 V, 3 A or more
-  into V+) each get their own battery.
-- **All grounds connect together:** UNO Q, both TB6612 GND pins, PCA9685, and both batteries' (−).
+- **One battery, three branches.** After the main switch, the pack feeds the TB6612's VM
+  directly (6–8.4 V; the TB6612's maximum is 13.5 V), the servo regulator (5 V into the
+  PCA9685's V+), and the board regulator (5 V into the UNO Q's 5V pin).
+- **Never power motors or servos from the UNO Q.** Its 5V pin is an input here, fed only by
+  its own regulator.
+- **Check polarity on the 5V pin.** Arduino's datasheet (rev 15 and later) allows powering
+  the board through it but lists no reverse-polarity or over-voltage protection; keep it at
+  4.5–5.5 V. USB-C can stay plugged in for uploads: the board joins its inputs through diodes.
+- **The board regulator must be buck-boost**, so it keeps giving 5 V when motor surges sag the
+  pack. The servo regulator must keep regulating down to a 6 V input.
+- **Don't feed the pack into VIN.** VIN needs 7–24 V, and a 2S pack spends its last stretch below 7 V.
+- **Shut down before switching off:** use Power off in the app and wait for the sleeping face.
+- **All grounds connect together:** UNO Q, both TB6612 GND pins, PCA9685, both regulators,
+  the pack's (−), and the bottom of the divider.
+- **Battery divider:** 20k from the pack's + (after the switch, so it doesn't drain a parked
+  robot) to A0, 10k from A0 to GND. 8.4 V reads 2.8 V at the pin.
 - **Tie the TB6612's STBY to 3.3 V**, or it ignores every command.
 - **Logic is 3.3 V:** TB6612 VCC and PCA9685 VCC come from the UNO Q's 3.3V pin.
 - **Add a 470–1000 µF capacitor** across the servo board's V+ and GND.
@@ -214,21 +325,36 @@ connect all grounds together. The header pins are 3.3 V.
 ## Status
 
 Working end to end: the phone connects over Bluetooth and the relay, router, sketch and
-LED matrix respond. **Not yet tested:** motors and servos in the robot, the LED matrix's
-brightness levels on real hardware, the desktop controller over real Bluetooth, and
-relay autostart after a reboot. See Section 7 of the PDF.
+LED matrix respond. On the board: every command including `batt` and `poweroff`, the
+empty-battery and power-off lockouts, 300 rapid commands with no lost replies, and Power
+off being refused cleanly without the sudoers rule. After `sudo reboot`, the relay starts by
+itself and restarts the sketch, which answers about 46 s after boot. The gamepad support
+drove the real relay and sketch through a virtual SF30 Pro on the board, and the real SF30
+Pro is paired, reconnects by itself, moves the arm, and shut the board down with Power off.
+**Not yet tested:** driving with its left stick, the phone and gamepad at the same time, motors and servos in the robot, the battery gauge on a real pack, Power off all
+the way down, a cold start from the battery switch, the LED matrix's brightness levels, and
+the desktop controller over real Bluetooth. See Section 7 of the PDF.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
 | App: "Robot not found" | Relay running? `tail ~/robot-ble/relay.log`. `bluetoothctl show` should say `Powered: yes`. On Android 11 or older, Location must be on. |
-| Replies: `'robot' failed ... not available` | The sketch on the board is old or not running. Re-upload `RobotRover.ino`. |
+| Replies: `robot restarting, try again in a few seconds` | The relay found the sketch unregistered (usually after a reboot) and is restarting it. If it keeps happening, re-upload `RobotRover.ino`. |
+| `run.sh --send`: `'robot' failed ... not available` | Same cause; `./run.sh --reset-mcu` restarts the sketch. If that doesn't help, re-upload `RobotRover.ino`. |
 | Replies: `no answer from 'robot'` | Sketch stuck or rebooting. Check the Serial Monitor. |
 | Matrix blank | Sketch not running. Re-upload. |
 | "PCA9685 servo board not found" | SDA/SCL wiring, servo board power, shared ground. |
 | A wheel runs backwards | Flip `LEFT_REVERSED` / `RIGHT_REVERSED` in the sketch. |
 | Desktop: "This browser can't use Bluetooth" | Use Chrome or Edge, opened through `serve.py`. |
+| Relay not running after a reboot | `journalctl -u cron` saying "expired password": set one with `arduino-passwd` (install step 2, item 3). |
+| Replies: `battery empty ... charge me` | Charge the pack. Moves unlock once it reads 6.8 V or more. |
+| `batt`: "battery not connected" | Pack switched off, or the divider isn't wired to A0. |
+| Power off: "poweroff not allowed" | Add the sudoers rule (install step 2, item 4). |
+| Board resets when the motors or servos start | Board regulator not buck-boost or too small, servo regulator too small, or grounds not shared. |
+| Gamepad does nothing | `relay.log` should say `gamepad connected`. If not: switch it on in D-input mode (Start + B), or pair it again with `pair-gamepad.sh`. |
+| Gamepad buttons do the wrong thing | Run `./run.sh --gamepad-test` and fix `BUTTONS` in `robot_gamepad.py`. |
+| Phone's drive buttons don't work | The gamepad is driving; the phone gets the wheels back 0.5 s after its sticks are released. |
 
 Changing joint limits, home angles, Bluetooth UUIDs or timings? Several files must agree.
 See "Values that must match across seams" in Section 4 of the PDF.
@@ -248,11 +374,25 @@ python docs/build_pdf.py
 It writes `RobotRover_System_Guide.pdf` in the repo root, using `images/app_mockup.png` and
 `images/wiring.png`; every other figure is drawn by the script.
 
+The two images in this README come from editable sources in the repo:
+
+- `images/board_pinout.png`: `python docs/build_pdf.py --pinout-svg` writes
+  `images/board_pinout.svg` from the PDF's own pinout drawing; render it at 3× (below).
+- `images/wiring.png`: rendered from the hand-written `images/wiring.svg`.
+
+To render either one with Edge (adjust the size to the SVG's width and height):
+
+```bash
+msedge --headless=new --hide-scrollbars --force-device-scale-factor=3 --window-size=468,484 --screenshot=board_pinout.png file:///path/to/images/board_pinout.svg
+```
+
 ## Security
 
 Bluetooth LE here has no pairing or PIN, so anyone nearby could connect while the relay
 runs. The relay only accepts the robot commands above, so nothing else on the board is
-reachable. To stop the relay (Option A install):
+reachable. That includes Power off: anyone who can connect can shut the board down, the
+same exposure as driving it. The sudoers rule allows `systemctl halt` and nothing else.
+To stop the relay (Option A install):
 
 ```bash
 adb shell "pkill -f '[k]eepalive.sh'; pkill -f '[r]obot_ble_bridge.py'"

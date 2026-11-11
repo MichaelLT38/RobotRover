@@ -13,7 +13,7 @@ sudo apt-get install -y python3-venv bluez
 
 echo "==> Copying files to $INSTALL_DIR"
 sudo mkdir -p "$INSTALL_DIR"
-sudo cp "$HERE/robot_ble_bridge.py" "$INSTALL_DIR/"
+sudo cp "$HERE/robot_ble_bridge.py" "$HERE/robot_gamepad.py" "$HERE/pair-gamepad.sh" "$INSTALL_DIR/"
 
 echo "==> Creating Python environment and installing bless + msgpack"
 sudo python3 -m venv "$INSTALL_DIR/venv"

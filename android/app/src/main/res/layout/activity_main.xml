@@ -339,6 +339,20 @@
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp" />
             </LinearLayout>
+
+            <!-- ===== Shut the board down before switching the battery off ===== -->
+            <Button
+                android:id="@+id/powerOffButton"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_button_outline"
+                android:fontFamily="sans-serif-medium"
+                android:stateListAnimator="@null"
+                android:text="Power off robot"
+                android:textAllCaps="false"
+                android:textColor="@color/text"
+                android:textSize="15sp" />
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

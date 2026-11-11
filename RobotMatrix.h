@@ -7,6 +7,10 @@
   - Then the robot face reacts for a few seconds (looks where you drove,
     squints when the gripper closes, smiles after "home"...).
   - When nothing is happening, it shows a calm face that blinks and glances around.
+  - Battery: when the pack is low, the idle face shows a battery icon for 1 s
+    every 8 s. When it's empty, a blinking empty battery replaces the faces.
+  - Power off: a pulsing power symbol while Linux shuts down, then a sleeping
+    face once it's safe to switch the battery off.
 
   The joint dial and claw follow the servos' actual positions, so you can see
   the arm catching up to a command.
@@ -32,10 +36,16 @@ const int H = 8;                       // rows
 const uint8_t MAX_BRIGHT = 7;          // 3-bit grayscale: 0 (off) to 7 (full)
 const unsigned long FRAME_MS = 40;     // ~25 frames per second
 const unsigned long REACT_MS = 2500;   // how long the face reacts after an icon
+const unsigned long LOW_EVERY_MS = 8000;   // battery low: show the battery icon this often...
+const unsigned long LOW_SHOW_MS = 1000;    // ...for this long
+// Power off: Linux halts within a few seconds, and the board restarts by itself about
+// 45 s later while power is connected, so show "safe to switch off" in between
+const unsigned long SAFE_AFTER_MS = 15000;
 
 enum Event { EV_NONE, EV_FWD, EV_BACK, EV_LEFT, EV_RIGHT, EV_STOP, EV_JOINT,
-             EV_GRIP, EV_HOME, EV_SPEED, EV_POS, EV_UNKNOWN };
+             EV_GRIP, EV_HOME, EV_SPEED, EV_POS, EV_BATT, EV_UNKNOWN };
 enum Mood  { M_NEUTRAL, M_WIDE, M_SQUINT, M_HAPPY, M_CONFUSED };
+enum Battery { BATT_NONE, BATT_OK, BATT_LOW, BATT_EMPTY };   // BATT_NONE: not measured
 
 Arduino_LED_Matrix matrix;
 uint8_t frame[W * H];
@@ -46,6 +56,10 @@ unsigned long eventAt = 0;             // when the latest command arrived
 Mood mood = M_NEUTRAL;                 // face reaction after the icon
 int lookX = 0, lookY = 0;              // where the pupils point (-1, 0, 1)
 unsigned long lastFrame = 0;
+Battery battery = BATT_NONE;           // from setBattery()
+int battFill = 0;                      // charge bar length, 0-7 pixels
+bool poweringOff = false;              // from setPoweringOff()
+unsigned long poweroffAt = 0;
 
 // ------------------------------------------------------------------
 //  Drawing helpers
@@ -192,6 +206,55 @@ void question() {
   pattern(rows, MAX_BRIGHT);
 }
 
+// Battery with a charge bar of 0-7 pixels. The outline blinks when empty.
+void batteryIcon(int fill, bool blink, unsigned long now) {
+  static const char* const rows[H] = {
+    ".............",
+    "###########..",
+    "#.........#..",
+    "#.........##.",
+    "#.........##.",
+    "#.........#..",
+    "###########..",
+    ".............",
+  };
+  if (!blink || (now / 500) % 2 == 0) pattern(rows, MAX_BRIGHT);
+  for (int x = 0; x < constrain(fill, 0, 7); x++) {
+    px(2 + x, 3, MAX_BRIGHT);
+    px(2 + x, 4, MAX_BRIGHT);
+  }
+}
+
+// Power symbol, pulsing: Linux is shutting down, don't switch off yet
+void powerIcon(unsigned long now) {
+  static const char* const rows[H] = {
+    "......#......",
+    "...#..#..#...",
+    "..#...#...#..",
+    "..#.......#..",
+    "..#.......#..",
+    "...#.....#...",
+    "....#####....",
+    ".............",
+  };
+  pattern(rows, ((now / 400) % 2) ? 2 : MAX_BRIGHT);
+}
+
+// Sleeping face: safe to switch the battery off
+void sleepFace() {
+  static const char* const rows[H] = {
+    "........####.",
+    "..........#..",
+    ".........#...",
+    "........####.",
+    ".............",
+    "..444...444..",
+    ".............",
+    ".....333.....",
+  };
+  pattern(rows, MAX_BRIGHT);
+}
+
 // ------------------------------------------------------------------
 //  Face
 // ------------------------------------------------------------------
@@ -238,7 +301,7 @@ unsigned long iconDuration(Event e) {
   switch (e) {
     case EV_FWD: case EV_BACK: case EV_LEFT: case EV_RIGHT: return 600;   // refreshed by each drive pulse
     case EV_STOP:    return 700;
-    case EV_JOINT: case EV_GRIP: case EV_SPEED: case EV_HOME: return 1200;
+    case EV_JOINT: case EV_GRIP: case EV_SPEED: case EV_HOME: case EV_BATT: return 1200;
     case EV_UNKNOWN: return 1500;
     default:         return 0;                                            // EV_POS: straight to the face
   }
@@ -275,14 +338,32 @@ void onCommand(const String& cmd, bool hasValue, long value) {
   else if (cmd == "close") { e = EV_GRIP; m = M_SQUINT; }
   else if (cmd == "home")  { e = EV_HOME; m = M_HAPPY; }
   else if (cmd == "speed" && hasValue) { e = EV_SPEED; m = value > 200 ? M_WIDE : M_NEUTRAL; }
+  else if (cmd == "batt") { e = EV_BATT; }
+  else if (cmd == "poweroff") { e = EV_NONE; }          // setPoweringOff() draws it
   else if (cmd == "pos" || cmd == "help" || cmd == "?") { e = EV_POS; lx = 1; ly = -1; }
   else { m = M_CONFUSED; }
+
+  // A status query doesn't cut short an icon or face reaction that is still showing
+  // (the gamepad sends "pos" right after "home" to re-read the arm angles)
+  if (e == EV_POS && event != EV_NONE && millis() - eventAt < iconDuration(event) + REACT_MS) return;
 
   event = e;
   mood = m;
   lookX = lx;
   lookY = ly;
   eventAt = millis();
+}
+
+// Call whenever the battery reading changes. fill: charge bar length, 0-7 pixels.
+void setBattery(Battery state, int fill) {
+  battery = state;
+  battFill = fill;
+}
+
+// Call when Linux starts shutting down (true), or if that was cancelled (false)
+void setPoweringOff(bool on) {
+  if (on && !poweringOff) poweroffAt = millis();
+  poweringOff = on;
 }
 
 // Call every loop(). angles: current base, shoulder, elbow, gripper servo angles.
@@ -295,7 +376,10 @@ void update(const int angles[4], int speed) {
   unsigned long since = now - eventAt;
   unsigned long iconMs = iconDuration(event);
 
-  if (event != EV_NONE && since < iconMs) {
+  if (poweringOff) {
+    if (now - poweroffAt < SAFE_AFTER_MS) powerIcon(now);
+    else sleepFace();
+  } else if (event != EV_NONE && since < iconMs) {
     switch (event) {
       case EV_FWD:     chevrons(0, now); break;
       case EV_BACK:    chevrons(1, now); break;
@@ -306,11 +390,16 @@ void update(const int angles[4], int speed) {
       case EV_GRIP:    claw(angles[3]); break;
       case EV_HOME:    house(); break;
       case EV_SPEED:   speedBar(speed, now); break;
+      case EV_BATT:    batteryIcon(battFill, battery == BATT_EMPTY, now); break;
       case EV_UNKNOWN: question(); break;
       default: break;
     }
+  } else if (battery == BATT_EMPTY) {
+    batteryIcon(battFill, true, now);                 // empty: no faces until charged
   } else if (event != EV_NONE && since < iconMs + REACT_MS) {
     face(mood, lookX, lookY, false);
+  } else if (battery == BATT_LOW && now % LOW_EVERY_MS < LOW_SHOW_MS) {
+    batteryIcon(battFill, false, now);
   } else {
     idleFace(now);
   }
