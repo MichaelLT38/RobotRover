@@ -14,11 +14,12 @@ sudo apt-get install -y python3-venv bluez
 echo "==> Copying files to $INSTALL_DIR"
 sudo mkdir -p "$INSTALL_DIR"
 sudo cp "$HERE/robot_ble_bridge.py" "$HERE/robot_gamepad.py" "$HERE/pair-gamepad.sh" "$INSTALL_DIR/"
+sudo chmod +x "$INSTALL_DIR/pair-gamepad.sh"
 
 echo "==> Creating Python environment and installing bless + msgpack"
 sudo python3 -m venv "$INSTALL_DIR/venv"
 sudo "$INSTALL_DIR/venv/bin/pip" install --upgrade pip
-sudo "$INSTALL_DIR/venv/bin/pip" install bless msgpack
+sudo "$INSTALL_DIR/venv/bin/pip" install bless==0.3.0 msgpack==1.2.3
 
 echo "==> Turning on Bluetooth"
 sudo rfkill unblock bluetooth || true

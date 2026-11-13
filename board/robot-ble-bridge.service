@@ -1,5 +1,5 @@
 [Unit]
-Description=RobotRover Bluetooth relay (phone -> sketch)
+Description=RobotRover Bluetooth relay (phone and gamepad -> sketch)
 After=bluetooth.service
 Wants=bluetooth.service
 

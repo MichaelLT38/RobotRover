@@ -23,6 +23,7 @@ kill "$SCAN" 2>/dev/null
 bluetoothctl scan off >/dev/null 2>&1
 
 if [ -z "$MAC" ]; then
+    bluetoothctl pairable off >/dev/null
     echo "No 8BitDo controller found. Is it in D-input mode and blinking quickly (pairing)?"
     exit 1
 fi
@@ -30,5 +31,6 @@ fi
 echo "Found $(bluetoothctl info "$MAC" | sed -n 's/^[[:space:]]*Name: //p') ($MAC). Pairing..."
 bluetoothctl --timeout 30 --agent NoInputNoOutput pair "$MAC" | grep -i -E "success|fail|error"
 bluetoothctl trust "$MAC" >/dev/null
+bluetoothctl pairable off >/dev/null   # nothing else can pair with the board afterwards
 bluetoothctl --timeout 15 connect "$MAC" | grep -i -E "success|fail|error"
 bluetoothctl info "$MAC" | grep -E "Name|Paired|Bonded|Trusted|Connected"

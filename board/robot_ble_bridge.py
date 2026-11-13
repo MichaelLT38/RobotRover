@@ -8,9 +8,9 @@ RobotRover Bluetooth relay - runs on the Arduino UNO Q's Linux side.
 The phone writes text commands (like "w 300" or "base 45") to a Bluetooth LE
 "Nordic UART Service". This script checks each command against an allowlist,
 calls the sketch's "robot" Bridge method with it, and sends the sketch's short
-reply back to the phone. A paired gamepad's sticks and buttons become the same
-commands, through the same queue; while its sticks are driving, the phone's
-drive commands are ignored.
+reply back to the phone. A paired gamepad's left stick, D-pad and buttons become
+the same commands, through the same queue; while the gamepad is driving, the
+phone's drive commands are ignored.
 
 "poweroff" is handled here rather than passed through: the sketch is told to
 stop and show a power icon, then Linux shuts down (systemctl halt) so the
@@ -18,11 +18,13 @@ battery can be switched off safely. That needs root (the systemd install) or a s
 for the arduino user (see README).
 
 Test the sketch link without Bluetooth:
-    sudo /opt/robot-ble/venv/bin/python /opt/robot-ble/robot_ble_bridge.py --send pos
+    ./run.sh --send pos                                  (offline install, in ~/robot-ble)
+    sudo /opt/robot-ble/venv/bin/python /opt/robot-ble/robot_ble_bridge.py --send pos   (setup.sh install)
 """
 
 import argparse
 import asyncio
+import collections
 import logging
 import os
 import re
@@ -51,7 +53,8 @@ POWEROFF_CMD = ["/usr/bin/systemctl", "halt"]
 # restarts. Arduino's script pulses the STM32's reset line through GPIO (the arduino
 # user is in the gpiod group, so no sudo is needed).
 MCU_RESET_CMD = ["/opt/openocd/bin/arduino-reset.sh"]
-SKETCH_WAIT_S = 20               # at startup, give a freshly powered sketch this long first
+SKETCH_WAIT_S = 20               # at startup, give a sketch that doesn't answer at all this long first
+UNREGISTERED_RESET_S = 5         # ...but reset sooner if the router keeps saying "not available"
 MCU_RESET_EVERY_S = 30           # never reset more often than this
 
 # Nordic UART Service - a common, well-supported way to send text over Bluetooth LE
@@ -62,12 +65,14 @@ NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"   # we send replies here (notify
 # Only these commands are passed to the robot. Anything else is rejected.
 ALLOWED = re.compile(
     r"^(?:(?:w|a|s|d) \d{1,5}|w|a|s|d|x|stop|open|close|home|pos|batt|poweroff"
-    r"|(?:speed|base|shoulder|elbow|grip) \d{1,3}|m -?\d{1,3} -?\d{1,3}(?: \d{1,5})?)$"
+    r"|(?:speed|base|shoulder|elbow|grip) \d{1,3}|m -?\d{1,3} -?\d{1,3}(?: \d{1,5})?)$",
+    re.ASCII,   # plain 0-9 only
 )
 
-# Drive commands. While the gamepad's sticks are driving, the phone's are ignored
-# until PAD_DRIVE_HOLD_S after the gamepad's last one. Stop always works.
+# Drive commands (list every one here). While the gamepad is driving, the phone's are
+# ignored until PAD_DRIVE_HOLD_S after the gamepad's last one. Stop always works.
 DRIVE_CMD = re.compile(r"^(?:w|a|s|d|m)(?: |$)")
+STOP_CMD = re.compile(r"^(?:x|stop)$")
 PAD_DRIVE_HOLD_S = 0.5
 
 log = logging.getLogger("robot-ble")
@@ -136,19 +141,30 @@ class RouterClient:
             self.unpacker.feed(data)
 
 
-def sketch_answers(router):
+def sketch_state(router):
+    """"ok", "unregistered" (the router is up but has no "robot" method) or "down"."""
     try:
         router.call(BRIDGE_METHOD, "pos")
-        return True
-    except Exception:
-        return False
+        return "ok"
+    except Exception as exc:
+        return "unregistered" if "not available" in str(exc) else "down"
 
 
-def wait_for_sketch(router, seconds):
+def wait_for_sketch(router, seconds, unregistered_limit=None):
+    """True once the sketch answers. Gives up after `seconds`, or sooner if the router has
+    said "not available" for `unregistered_limit` seconds in a row."""
     deadline = time.monotonic() + seconds
+    unregistered_since = None
     while time.monotonic() < deadline:
-        if sketch_answers(router):
+        state = sketch_state(router)
+        if state == "ok":
             return True
+        if state != "unregistered":
+            unregistered_since = None
+        elif unregistered_since is None:
+            unregistered_since = time.monotonic()
+        elif unregistered_limit is not None and time.monotonic() - unregistered_since >= unregistered_limit:
+            return False
         time.sleep(1)
     return False
 
@@ -177,7 +193,7 @@ def reset_mcu(router):
 
 def ensure_sketch(router):
     """At startup: wait for the sketch, and reset the microcontroller once if it never answers."""
-    if wait_for_sketch(router, SKETCH_WAIT_S):
+    if wait_for_sketch(router, SKETCH_WAIT_S, UNREGISTERED_RESET_S):
         log.info("sketch is answering")
     else:
         reset_mcu(router)
@@ -223,7 +239,8 @@ async def run_ble(router, use_gamepad=True):
     )
 
     loop = asyncio.get_running_loop()
-    queue = asyncio.Queue(maxsize=QUEUE_LIMIT)
+    queue = collections.deque()      # only touched on the event loop's thread
+    queued = asyncio.Event()
     server = BlessServer(name=DEVICE_NAME, loop=loop)
 
     def notify(text):
@@ -233,12 +250,18 @@ async def run_ble(router, use_gamepad=True):
         characteristic.value = bytearray(text.encode("utf-8")[:MAX_REPLY_BYTES])
         server.update_value(NUS_SERVICE, NUS_TX)
 
-    # Queue items: (source "phone" or "pad", command line, callback for the reply or None)
+    # Queue items: (source "phone" or "pad", command line)
     def enqueue(item):
-        if queue.full():
-            dropped = queue.get_nowait()
-            log.warning("queue full, dropped %r", dropped[1])
-        queue.put_nowait(item)
+        source, line = item
+        if DRIVE_CMD.match(line) or STOP_CMD.match(line):
+            # A newer drive or stop command replaces this source's older drive commands that
+            # haven't run yet, so a backlog (sketch slow to answer) can't replay stale driving
+            for old in [q for q in queue if q[0] == source and DRIVE_CMD.match(q[1])]:
+                queue.remove(old)
+        if len(queue) >= QUEUE_LIMIT:
+            log.warning("queue full, dropped %r", queue.popleft()[1])
+        queue.append(item)
+        queued.set()
 
     def on_read(characteristic, **kwargs):
         return characteristic.value
@@ -251,18 +274,22 @@ async def run_ble(router, use_gamepad=True):
         for line in text.replace("\r", "\n").split("\n"):
             line = " ".join(line.strip().lower().split())
             if line:
-                loop.call_soon_threadsafe(enqueue, ("phone", line, None))
+                loop.call_soon_threadsafe(enqueue, ("phone", line))
 
     # Called from the gamepad thread
-    def pad_send(line, on_reply=None):
-        loop.call_soon_threadsafe(enqueue, ("pad", line, on_reply))
+    def pad_send(line):
+        loop.call_soon_threadsafe(enqueue, ("pad", line))
 
     pad_drive_until = 0.0
+    pad_on_reply = None      # set when gamepad support starts
 
     async def worker():
         nonlocal pad_drive_until
         while True:
-            source, line, on_reply = await queue.get()
+            while not queue:
+                queued.clear()
+                await queued.wait()
+            source, line = queue.popleft()
             from_phone = source == "phone"
             if not ALLOWED.match(line):
                 log.warning("rejected %r from the %s", line, source)
@@ -283,8 +310,8 @@ async def run_ble(router, use_gamepad=True):
                 log.debug("%s %s -> %s", source, line, reply)
                 if from_phone:
                     notify(reply)      # the gamepad's replies would flood the phone's log
-                if on_reply:
-                    on_reply(reply)
+                if pad_on_reply:
+                    pad_on_reply(reply)   # the gamepad tracks angles and speed whoever changed them
             except Exception as exc:  # keep running no matter what
                 log.warning("%s failed: %s", line, exc)
                 if "not available" in str(exc):
@@ -320,7 +347,9 @@ async def run_ble(router, use_gamepad=True):
     if use_gamepad:
         try:
             from robot_gamepad import GamepadReader
-            GamepadReader(pad_send).start()
+            reader = GamepadReader(pad_send)
+            pad_on_reply = reader.logic.on_reply
+            reader.start()
             log.info("Watching for a paired gamepad")
         except Exception as exc:   # the phone keeps working even if this fails
             log.warning("gamepad support not started: %s", exc)
@@ -353,6 +382,10 @@ def main():
     router = RouterClient(args.socket)
 
     if args.send:
+        if " ".join(args.send.lower().split()) == "poweroff":
+            # The real thing, as from the app: tell the sketch, then shut Linux down
+            asyncio.run(power_off(router, print))
+            return
         try:
             print(router.call(BRIDGE_METHOD, args.send))
         except Exception as exc:

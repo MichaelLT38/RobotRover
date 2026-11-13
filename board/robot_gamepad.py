@@ -70,12 +70,15 @@ ARM_STEP_S = 0.08        # ...this often while its button is held (50 degrees a 
 SPEED_STEP = 25          # L / R change the top speed by this much
 POWEROFF_HOLD_S = 3.0    # hold Start + Select this long to power off
 HOME_TAP_S = 1.0         # Start released sooner than this (and not part of the hold) = home
+REFUSED_PAUSE_S = 1.0    # after the robot refuses a move (battery empty, powering off), wait this long
+TICK_S = 0.02            # how often the sticks and held buttons are looked at
 
 EVENT = struct.Struct("qqHHi")   # struct input_event on 64-bit Linux: time, type, code, value
 
 
 class PadLogic:
-    """Turns controller state into robot commands. send(line, on_reply) queues one command."""
+    """Turns controller state into robot commands. send(line) queues one command; the relay
+    passes every reply from the sketch (to anyone's command) to on_reply()."""
 
     def __init__(self, send):
         self.send = send
@@ -97,6 +100,8 @@ class PadLogic:
         self.last_wheels = (0, 0)
         self.last_arm = 0.0
         self.combo_done = False
+        self.refused = False             # the sketch just refused a move
+        self.arm_paused_until = 0.0
 
     # ---- called by the reader
     def connected(self, axes):
@@ -104,7 +109,7 @@ class PadLogic:
         with self.lock:
             self._reset(axes)
             can_drive = self.can_drive
-        self.send("pos", self.on_reply)  # learn the arm angles and the speed
+        self.send("pos")                 # learn the arm angles and the speed
         return can_drive
 
     def disconnected(self):
@@ -113,7 +118,7 @@ class PadLogic:
             self.held.clear()
             self.axes.clear()
         if was_driving:
-            self.send("x", None)
+            self.send("x")
 
     def axis(self, code, value, now):
         with self.lock:
@@ -127,8 +132,15 @@ class PadLogic:
             self._button(label, pressed, now)
 
     def on_reply(self, reply):
-        """Keeps the arm angles and the top speed in step with what the sketch actually did."""
+        """Keeps the arm angles and the top speed in step with what the sketch actually did,
+        whoever sent the command (this gamepad, the phone or the desktop page)."""
+        if reply == "arm going home":
+            self.send("pos")             # the angles changed; read them back
+            return
         with self.lock:
+            if reply == "powering off" or reply.startswith("battery empty"):
+                self.refused = True      # our own angles may have run ahead; tick() re-reads them
+                return
             m = re.match(r"(base|shoulder|elbow) -> (\d+)", reply)
             if m:
                 self.angles[m[1]] = int(m[2])
@@ -144,9 +156,14 @@ class PadLogic:
 
     def tick(self, now):
         with self.lock:
+            if self.refused:
+                self.refused = False
+                if now >= self.arm_paused_until:
+                    self.arm_paused_until = now + REFUSED_PAUSE_S
+                    self.send("pos")
             self._power_off_hold(now)
             self._drive(now)
-            if now - self.last_arm >= ARM_STEP_S:
+            if now >= self.arm_paused_until and now - self.last_arm >= ARM_STEP_S:
                 self.last_arm = now
                 self._arm()
 
@@ -157,25 +174,24 @@ class PadLogic:
                 return                   # already down (or key repeat)
             self.held[label] = now
             if label == "A":
-                self.send("open", None)
+                self.send("open")
             elif label == "B":
-                self.send("close", None)
+                self.send("close")
             elif label == "X":
-                self.send("batt", None)
+                self.send("batt")
             elif label == "SELECT":
                 self.driving = False
-                self.send("x", None)
+                self.send("x")
             elif label in ("L", "R"):
                 step = SPEED_STEP if label == "R" else -SPEED_STEP
                 self.speed = max(0, min(255, self.speed + step))
-                self.send(f"speed {self.speed}", self.on_reply)
+                self.send(f"speed {self.speed}")
         else:
             since = self.held.pop(label, None)
             if since is None:
                 return
             if label == "START" and not self.combo_done and now - since < HOME_TAP_S:
-                self.send("home", None)
-                self.send("pos", self.on_reply)   # home changed the arm angles
+                self.send("home")                 # on_reply() re-reads the angles afterwards
             if "START" not in self.held and "SELECT" not in self.held:
                 self.combo_done = False
 
@@ -185,7 +201,7 @@ class PadLogic:
         if now - max(self.held["START"], self.held["SELECT"]) >= POWEROFF_HOLD_S:
             self.combo_done = True
             self.driving = False
-            self.send("poweroff", None)
+            self.send("poweroff")
 
     @staticmethod
     def _dead(stick):
@@ -214,11 +230,11 @@ class PadLogic:
         if (left, right) != (0, 0):
             changed = max(abs(left - self.last_wheels[0]), abs(right - self.last_wheels[1])) > CHANGE
             if not self.driving or changed or now - self.last_drive >= REPEAT_S:
-                self.send(f"m {left} {right} {PULSE_MS}", None)
+                self.send(f"m {left} {right} {PULSE_MS}")
                 self.driving, self.last_drive, self.last_wheels = True, now, (left, right)
         elif self.driving:
             self.driving, self.last_wheels = False, (0, 0)
-            self.send("x", None)
+            self.send("x")
 
     def _arm(self):
         dx = round(self.axes.get(DPAD_X, 0.0))
@@ -236,7 +252,7 @@ class PadLogic:
             target = max(0, min(180, self.angles[joint] + direction * ARM_STEP_DEG))
             if target != self.angles[joint]:
                 self.angles[joint] = target          # the reply corrects it if the sketch clamps
-                self.send(f"{joint} {target}", self.on_reply)
+                self.send(f"{joint} {target}")
 
 
 # ---------------------------------------------------------------- reading the device
@@ -311,7 +327,7 @@ class GamepadReader(threading.Thread):
                 log.warning("gamepad %s has no sticks; put it in D-input (Android) mode to drive", name)
             pending = b""
             while True:
-                ready, _, _ = select.select([fd], [], [], 0.05)
+                ready, _, _ = select.select([fd], [], [], TICK_S)
                 now = time.monotonic()
                 if ready:
                     data = os.read(fd, EVENT.size * 64)   # raises OSError when the controller goes away
