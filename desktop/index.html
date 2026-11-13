@@ -148,6 +148,8 @@ const enc = new TextEncoder(), dec = new TextDecoder();
 // ---------------------------------------------------------------------
 let mode = "offline";            // offline | searching | connecting | connected | demo
 let device = null, rxChar = null;
+let attempt = 0;                 // counts connect attempts, so a cancelled one can tell it is stale
+let syncAll = false;             // the next pos reply also snaps the preview's servo positions
 
 function setMode(next) {
   mode = next;
@@ -190,19 +192,26 @@ async function connectBle() {
     detail("This browser can't use Bluetooth. Open the page in Chrome or Edge via serve.py (http://localhost).");
     return;
   }
+  const mine = ++attempt;                       // Cancel or a newer attempt makes this one stale
+  const stale = () => mine !== attempt;
+  let dev = null;
   setMode("searching");
   detail("Pick RobotRover in the browser's device list.");
   try {
-    device = await navigator.bluetooth.requestDevice({
+    dev = await navigator.bluetooth.requestDevice({
       filters: [{ services: [NUS_SERVICE] }, { name: "RobotRover" }],
       optionalServices: [NUS_SERVICE],
     });
+    if (stale()) return;
+    device = dev;
     setMode("connecting");
     detail("Connecting…");
-    device.addEventListener("gattserverdisconnected", onBleDisconnected);
-    const server = await device.gatt.connect();
+    dev.addEventListener("gattserverdisconnected", onBleDisconnected);
+    const server = await dev.gatt.connect();
+    if (stale()) return;
     const service = await server.getPrimaryService(NUS_SERVICE);
-    rxChar = await service.getCharacteristic(NUS_RX);
+    const rx = await service.getCharacteristic(NUS_RX);
+    let replies = true;
     try {
       const tx = await service.getCharacteristic(NUS_TX);
       tx.addEventListener("characteristicvaluechanged", (e) => {
@@ -212,24 +221,31 @@ async function connectBle() {
       });
       await tx.startNotifications();
     } catch (e) {
-      detail("Connected, but replies aren't available.");
+      replies = false;
     }
+    if (stale()) return;
+    rxChar = rx;
+    syncAll = true;                             // the first pos reply sets the preview outright
     setMode("connected");
-    detail("Hold an arrow (or W/A/S/D) to drive.");
+    detail(replies ? "Hold an arrow (or W/A/S/D) to drive."
+                   : "Connected, but replies aren't available: the sliders can't follow the robot.");
+    send("pos");                                // set the sliders to where the robot really is
   } catch (e) {
+    if (stale()) return;
     rxChar = null;
-    if (device && device.gatt.connected) device.gatt.disconnect();
+    if (dev && dev.gatt.connected) dev.gatt.disconnect();
     setMode("offline");
     detail(e.name === "NotFoundError" ? "No robot picked." : `Couldn't connect: ${e.message}`);
   }
 }
 
 function disconnectBle() {
+  attempt++;                                    // abandons a connect that is still in progress
   stopDriving();
   queue.length = 0;
   if (device) {
     device.removeEventListener("gattserverdisconnected", onBleDisconnected);
-    if (device.gatt.connected) device.gatt.disconnect();
+    try { device.gatt.disconnect(); } catch (e) { /* not connected yet */ }   // also aborts a pending connect
   }
   device = null; rxChar = null; inFlight = false;
   setMode("offline");
@@ -298,10 +314,43 @@ function setDemoPoweringOff(on) {
   LM.setPoweringOff(on);
 }
 
-// Connected to a real robot: keep the preview's battery in step with its replies
+// A slider follows the robot's replies except while it is being dragged and just after
+const SLIDER_SETTLE_MS = 600, RESYNC_MS = 1000;
+const sliderTouched = {};        // slider id -> time of the last drag (Infinity while dragging)
+let lastResync = 0;
+const JOINT_KEYS = { base: "base", shoulder: "shoulder", elbow: "elbow", gripper: "grip" };
+
+function followRobot(id, value) {
+  if (performance.now() - (sliderTouched[id] || -Infinity) < SLIDER_SETTLE_MS) return;
+  setSlider(id, value);
+}
+
+// Connected to a real robot: keep the sliders, the preview's model and its battery in step
+// with the replies (the gamepad, a refused move or the console may have changed things)
 function learnFromReply(text) {
   const t = text.trim();
   let m;
+  if ((m = /^base (\d+) shoulder (\d+) elbow (\d+) gripper (\d+) speed (\d+)/.exec(t))) {
+    ["base", "shoulder", "elbow", "grip"].forEach((key, i) => {
+      demo.joints[key].target = +m[i + 1];
+      if (syncAll) demo.joints[key].current = +m[i + 1];
+      followRobot(key, +m[i + 1]);
+    });
+    demo.speed = +m[5];
+    followRobot("speed", demo.speed);
+    syncAll = false;
+    return;
+  }
+  if ((m = /^(base|shoulder|elbow|gripper) -> (\d+)/.exec(t))) {
+    demo.joints[JOINT_KEYS[m[1]]].target = +m[2];
+    followRobot(JOINT_KEYS[m[1]], +m[2]);
+    return;
+  }
+  if ((m = /^speed (\d+)$/.exec(t))) { demo.speed = +m[1]; followRobot("speed", demo.speed); return; }
+  if (t === "powering off" || t.startsWith("battery empty")) {      // a refused move: ask where things are
+    if (performance.now() - lastResync >= RESYNC_MS) { lastResync = performance.now(); send("pos"); }
+  }
+  if (t.startsWith("powering off:")) setDemoPoweringOff(true);      // the relay's notice, e.g. from the gamepad
   if ((m = /^battery (\d+(?:\.\d+)?) V (ok|low|empty)$/.exec(t))) setDemoBattery(m[2], +m[1]);
   else if ((m = /^battery empty (\d+(?:\.\d+)?) V/.exec(t))) setDemoBattery("empty", +m[1]);
   else if (/^battery (not connected|sensing off)/.test(t)) setDemoBattery("none", 0);
@@ -444,7 +493,11 @@ function stopDriving(sendStop = true) {
 }
 
 document.querySelectorAll(".drv").forEach((b) => {
-  b.addEventListener("pointerdown", (e) => { b.setPointerCapture(e.pointerId); startDriving(b.dataset.cmd); });
+  b.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;                 // left button or touch only
+    b.setPointerCapture(e.pointerId);
+    startDriving(b.dataset.cmd);
+  });
   b.addEventListener("pointerup", () => stopDriving());
   b.addEventListener("pointercancel", () => stopDriving());
 });
@@ -472,6 +525,10 @@ function showValue(slider) {
 
 document.querySelectorAll("input[type=range]").forEach((s) => {
   let last = 0;
+  s.addEventListener("pointerdown", () => { sliderTouched[s.id] = Infinity; });
+  for (const ev of ["pointerup", "pointercancel", "change"]) {
+    s.addEventListener(ev, () => { sliderTouched[s.id] = performance.now(); });
+  }
   s.addEventListener("input", () => {
     showValue(s);
     const now = performance.now();
@@ -491,22 +548,23 @@ $("homeBtn").addEventListener("click", goHome);
 // ---------------------------------------------------------------------
 //  Keyboard
 // ---------------------------------------------------------------------
-const DRIVE_KEYS = { w: "w", arrowup: "w", s: "s", arrowdown: "s", a: "a", arrowleft: "a", d: "d", arrowright: "d" };
+// By key position (e.code), so W/A/S/D sit where they do on a QWERTY keyboard in any layout
+const DRIVE_KEYS = { KeyW: "w", ArrowUp: "w", KeyS: "s", ArrowDown: "s", KeyA: "a", ArrowLeft: "a", KeyD: "d", ArrowRight: "d" };
 const live = () => mode === "connected" || mode === "demo";
 
 document.addEventListener("keydown", (e) => {
   const typing = e.target instanceof Element && e.target.closest("input:not([type=range]), textarea");
   if (typing || e.ctrlKey || e.metaKey || e.altKey || !live()) return;
-  const k = e.key.toLowerCase();
+  const k = e.code;
   if (DRIVE_KEYS[k]) { e.preventDefault(); if (!e.repeat) startDriving(DRIVE_KEYS[k]); return; }
   if (e.repeat) return;
-  if (k === " ") { e.preventDefault(); stopDriving(); }
-  else if (k === "o") gripOpen();
-  else if (k === "c") gripClose();
-  else if (k === "h") goHome();
+  if (k === "Space") { e.preventDefault(); stopDriving(); }
+  else if (k === "KeyO") gripOpen();
+  else if (k === "KeyC") gripClose();
+  else if (k === "KeyH") goHome();
 });
 document.addEventListener("keyup", (e) => {
-  const cmd = DRIVE_KEYS[e.key.toLowerCase()];
+  const cmd = DRIVE_KEYS[e.code];
   if (cmd && held === cmd) stopDriving();
 });
 
@@ -532,10 +590,10 @@ $("connectBtn").addEventListener("click", () => {
 });
 $("powerBtn").addEventListener("click", () => {
   if (!live()) return;
+  stopDriving();                                // before the dialog freezes the page
   const ok = confirm("Power off the robot?\n\nThe board's Linux side shuts down. Switch the battery off " +
                      "when the LED matrix shows the sleeping face.");
   if (!ok) return;
-  stopDriving();
   addLog("poweroff", true);
   send("poweroff");
 });
@@ -758,6 +816,7 @@ const LM = (() => {
 
 // Draw the preview
 const matrixCells = [];
+const matrixShown = new Uint8Array(13 * 8);   // what each cell currently shows
 for (let i = 0; i < LM.W * LM.H; i++) {
   const s = document.createElement("span");
   $("matrix").appendChild(s);
@@ -769,6 +828,8 @@ function renderMatrix() {
   if (f) {
     for (let i = 0; i < f.length; i++) {
       const v = f[i];
+      if (v === matrixShown[i]) continue;       // most cells don't change between frames
+      matrixShown[i] = v;
       matrixCells[i].style.background = v ? `rgba(77,163,255,${(0.22 + 0.78 * v / 7).toFixed(2)})` : "#1b2233";
     }
   }
