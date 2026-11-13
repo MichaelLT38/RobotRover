@@ -222,6 +222,8 @@ class RobotBle(private val context: Context, private val listener: Listener) {
             main.post {
                 if (g != gatt) return@post
                 operationInFlight = false
+                // Shorter connection interval: commands, and Stop above all, arrive sooner
+                g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
                 setState(State.CONNECTED)
                 pump()
             }

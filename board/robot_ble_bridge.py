@@ -75,6 +75,11 @@ DRIVE_CMD = re.compile(r"^(?:w|a|s|d|m)(?: |$)")
 STOP_CMD = re.compile(r"^(?:x|stop)$")
 PAD_DRIVE_HOLD_S = 0.5
 
+# After the gamepad changes the arm or the speed, the phone is sent one "pos" line once the
+# gamepad has been quiet this long, so the app's sliders follow without flooding its log.
+PAD_SYNC_QUIET_S = 0.5
+PAD_CHANGES = re.compile(r"^(?:speed|base|shoulder|elbow|grip|open|close|home)(?: |$)")
+
 log = logging.getLogger("robot-ble")
 
 
@@ -282,15 +287,16 @@ async def run_ble(router, use_gamepad=True):
 
     pad_drive_until = 0.0
     pad_on_reply = None      # set when gamepad support starts
+    pad_sync = None          # pending timer for the phone's "pos" line
 
     async def worker():
-        nonlocal pad_drive_until
+        nonlocal pad_drive_until, pad_sync
         while True:
             while not queue:
                 queued.clear()
                 await queued.wait()
             source, line = queue.popleft()
-            from_phone = source == "phone"
+            from_phone = source != "pad"     # "phone", or "sync": a pos line for the phone
             if not ALLOWED.match(line):
                 log.warning("rejected %r from the %s", line, source)
                 if from_phone:
@@ -310,6 +316,10 @@ async def run_ble(router, use_gamepad=True):
                 log.debug("%s %s -> %s", source, line, reply)
                 if from_phone:
                     notify(reply)      # the gamepad's replies would flood the phone's log
+                elif PAD_CHANGES.match(line):
+                    if pad_sync:
+                        pad_sync.cancel()
+                    pad_sync = loop.call_later(PAD_SYNC_QUIET_S, enqueue, ("sync", "pos"))
                 if pad_on_reply:
                     pad_on_reply(reply)   # the gamepad tracks angles and speed whoever changed them
             except Exception as exc:  # keep running no matter what

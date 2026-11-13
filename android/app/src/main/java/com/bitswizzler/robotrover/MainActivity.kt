@@ -38,6 +38,13 @@ class MainActivity : Activity(), RobotBle.Listener {
         private const val SLIDER_SEND_INTERVAL_MS = 100L
         private const val LOG_LINES = 6
 
+        // A slider follows the robot's replies except while it is being dragged and just after
+        private const val SLIDER_SETTLE_MS = 600L
+        private const val RESYNC_INTERVAL_MS = 1000L
+        private val POS_REPLY = Regex("""^base (\d+) shoulder (\d+) elbow (\d+) gripper (\d+) speed (\d+)""")
+        private val JOINT_REPLY = Regex("""^(base|shoulder|elbow|gripper) -> (\d+)""")
+        private val SPEED_REPLY = Regex("""^speed (\d+)$""")
+
         // Must match the sketch's home positions
         private const val HOME_BASE = 90
         private const val HOME_SHOULDER = 90
@@ -59,6 +66,9 @@ class MainActivity : Activity(), RobotBle.Listener {
     private lateinit var seekShoulder: SeekBar
     private lateinit var seekElbow: SeekBar
     private lateinit var seekGrip: SeekBar
+    private lateinit var seekSpeed: SeekBar
+    private val sliderTouchedAt = HashMap<SeekBar, Long>()   // Long.MAX_VALUE while being dragged
+    private var lastResync = 0L
 
     private val main = Handler(Looper.getMainLooper())
     private val logLines = ArrayDeque<String>()
@@ -90,6 +100,7 @@ class MainActivity : Activity(), RobotBle.Listener {
         seekShoulder = findViewById(R.id.seekShoulder)
         seekElbow = findViewById(R.id.seekElbow)
         seekGrip = findViewById(R.id.seekGrip)
+        seekSpeed = findViewById(R.id.seekSpeed)
 
         connectButton.setOnClickListener {
             if (robot.state == RobotBle.State.OFFLINE) {
@@ -106,9 +117,9 @@ class MainActivity : Activity(), RobotBle.Listener {
         setupDriveButton(R.id.btnBack, "s")
         setupDriveButton(R.id.btnLeft, "a")
         setupDriveButton(R.id.btnRight, "d")
-        findViewById<View>(R.id.btnStop).setOnClickListener { stopDriving() }
+        findViewById<View>(R.id.btnStop).setOnClickListener { stopDriving(always = true) }
 
-        setupSlider(findViewById(R.id.seekSpeed), findViewById(R.id.speedPill), "speed") { "Speed $it" }
+        setupSlider(seekSpeed, findViewById(R.id.speedPill), "speed") { "Speed $it" }
 
         // Arm
         setupSlider(seekBase, findViewById(R.id.valueBase), "base") { "$it°" }
@@ -168,14 +179,15 @@ class MainActivity : Activity(), RobotBle.Listener {
     @SuppressLint("ClickableViewAccessibility")
     private fun setupDriveButton(id: Int, command: String) {
         findViewById<View>(id).setOnTouchListener { view, event ->
-            if (!view.isEnabled) return@setOnTouchListener true
             when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
+                MotionEvent.ACTION_DOWN -> if (view.isEnabled) {
+                    // Keep the touch even if the thumb drifts: the page must not scroll and stop the robot
+                    view.parent.requestDisallowInterceptTouchEvent(true)
                     view.isPressed = true      // lights the button orange while held
                     startDriving(command)
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    view.isPressed = false
+                    view.isPressed = false     // also when the link dropped and disabled the button
                     stopDriving()
                 }
             }
@@ -189,10 +201,12 @@ class MainActivity : Activity(), RobotBle.Listener {
         driveRepeater.run()
     }
 
-    private fun stopDriving() {
+    /** Stops the wheels if a drive button was held, or [always] (the Stop button). */
+    private fun stopDriving(always: Boolean = false) {
+        val wasDriving = heldDriveCommand != null
         heldDriveCommand = null
         main.removeCallbacks(driveRepeater)
-        robot.send("x", kind = "drive")   // does nothing if not connected
+        if (wasDriving || always) robot.send("x", kind = "drive")   // does nothing if not connected
     }
 
     /** Slider that sends "<command> <value>" while dragging (throttled) and when released. */
@@ -212,9 +226,12 @@ class MainActivity : Activity(), RobotBle.Listener {
                 }
             }
 
-            override fun onStartTrackingTouch(bar: SeekBar) {}
+            override fun onStartTrackingTouch(bar: SeekBar) {
+                sliderTouchedAt[bar] = Long.MAX_VALUE
+            }
 
             override fun onStopTrackingTouch(bar: SeekBar) {
+                sliderTouchedAt[bar] = SystemClock.uptimeMillis()
                 robot.send("$command ${bar.progress}", kind = command)
             }
         })
@@ -273,7 +290,47 @@ class MainActivity : Activity(), RobotBle.Listener {
         statusText.text = text
     }
 
+    /** Moves a slider to the robot's real value, unless the user is dragging it or just let go. */
+    private fun syncSlider(bar: SeekBar, value: Int) {
+        val touched = sliderTouchedAt[bar] ?: 0L
+        if (touched == Long.MAX_VALUE || SystemClock.uptimeMillis() - touched < SLIDER_SETTLE_MS) return
+        bar.progress = value   // not "fromUser", so nothing is sent
+    }
+
+    /** Keeps the sliders in step with the robot: the gamepad or a refused command may have changed things. */
+    private fun syncFromReply(reply: String) {
+        POS_REPLY.find(reply)?.let { m ->
+            val v = m.groupValues.drop(1).map { it.toInt() }
+            syncSlider(seekBase, v[0]); syncSlider(seekShoulder, v[1]); syncSlider(seekElbow, v[2])
+            syncSlider(seekGrip, v[3]); syncSlider(seekSpeed, v[4])
+            return
+        }
+        JOINT_REPLY.find(reply)?.let { m ->
+            val bar = when (m.groupValues[1]) {
+                "base" -> seekBase
+                "shoulder" -> seekShoulder
+                "elbow" -> seekElbow
+                else -> seekGrip
+            }
+            syncSlider(bar, m.groupValues[2].toInt())
+            return
+        }
+        SPEED_REPLY.find(reply)?.let {
+            syncSlider(seekSpeed, it.groupValues[1].toInt())
+            return
+        }
+        // A refused move: the sliders may show something that didn't happen, so ask where things are
+        if (reply == "powering off" || reply.startsWith("battery empty")) {
+            val now = SystemClock.uptimeMillis()
+            if (now - lastResync >= RESYNC_INTERVAL_MS) {
+                lastResync = now
+                robot.send("pos")
+            }
+        }
+    }
+
     override fun onReply(text: String) {
+        syncFromReply(text.trim())
         logLines.addLast(text.trim())
         while (logLines.size > LOG_LINES) logLines.removeFirst()
 
@@ -316,6 +373,7 @@ class MainActivity : Activity(), RobotBle.Listener {
         }
 
         val connected = state == RobotBle.State.CONNECTED
+        if (connected) robot.send("pos")   // set the sliders to where the robot really is
         if (!connected) {
             heldDriveCommand = null
             main.removeCallbacks(driveRepeater)
