@@ -350,7 +350,7 @@ void printHelp() {
   Monitor.println("  w [ms]   forward          s [ms]   backward");
   Monitor.println("  a [ms]   spin left        d [ms]   spin right");
   Monitor.println("  x        stop");
-  Monitor.println("  m L R [ms]  tank drive: left and right wheel -255..255");
+  Monitor.println("  m L R [ms]  wheel speeds: left and right -255..255");
   Monitor.println("  speed N  set drive speed 0-255");
   Monitor.println("Arm (angles in degrees):");
   Monitor.println("  base N   shoulder N   elbow N   grip N");
@@ -358,7 +358,8 @@ void printHelp() {
   Monitor.println("Other:");
   Monitor.println("  pos      show arm positions");
   Monitor.println("  batt     show battery voltage");
-  Monitor.println("  poweroff get ready to be switched off (poweroff 0 cancels)");
+  Monitor.println("  poweroff power-off mode: no moves, power face (poweroff 0 cancels).");
+  Monitor.println("           Typed here it does NOT shut Linux down; use the app for that.");
   Monitor.println("  help     show this list");
   Monitor.println();
 }
@@ -395,7 +396,7 @@ int parseNumbers(const String& text, long out[], int maxCount) {
   return n;
 }
 
-// The matrix shows a tank drive ("m left right") like the matching arrow command
+// The matrix shows wheel speeds ("m left right") like the matching arrow command
 const char* tankIcon(long left, long right) {
   if (left == 0 && right == 0) return "x";
   if (left >= 0 && right >= 0) return "w";
@@ -426,7 +427,7 @@ String handleCommand(String line) {
 
   unsigned long ms = hasValue ? (unsigned long)max(0L, value) : DEFAULT_DRIVE_MS;
 
-  // Tank drive "m left right [ms]": each wheel -255..255 (sent by the gamepad's sticks)
+  // Wheel speeds "m left right [ms]": each wheel -255..255 (sent by the gamepad)
   long tank[3] = {0, 0, (long)DEFAULT_DRIVE_MS};
   int tankCount = (cmd == "m" && space > 0) ? parseNumbers(line.substring(space + 1), tank, 3) : 0;
 
@@ -504,9 +505,16 @@ String bridgeCommand(String line) {
   return runCommand(line);
 }
 
-// Collects characters typed in the Serial Monitor until Enter, then runs the command
+// Collects characters typed in the Serial Monitor until Enter, then runs the command.
+// Checking the Monitor is a round trip to the Linux side, so it's done every
+// MONITOR_POLL_MS rather than on every loop() pass.
+const unsigned long MONITOR_POLL_MS = 50;
+
 void readMonitorCommands() {
   static String buffer;
+  static unsigned long lastPoll = 0;
+  if (millis() - lastPoll < MONITOR_POLL_MS) return;
+  lastPoll = millis();
   while (Monitor.available() > 0) {
     char c = (char)Monitor.read();
     if (c == '\n' || c == '\r') {
