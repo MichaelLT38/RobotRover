@@ -543,8 +543,8 @@ def matrix_grid():
     return d
 
 # ---------------------------------------------------------------- page furniture
-TODAY = date(2026, 11, 11).strftime("%B %d, %Y").replace(" 0", " ")
-VERSION = "1.2"
+TODAY = date(2026, 11, 13).strftime("%B %d, %Y").replace(" 0", " ")
+VERSION = "1.3"
 
 def cover(c, doc):
     w, h = letter
@@ -570,18 +570,18 @@ def cover(c, doc):
     c.setFillColor(colors.HexColor("#C9CED6"))
     c.drawString(0.9 * inch, h - 2.75 * inch, "System design, build notes and installation guide")
     c.setFont("Helvetica", 10.5)
-    c.drawString(0.9 * inch, h - 3.2 * inch, "Arduino UNO Q  -  Bluetooth LE  -  Android  -  Web Bluetooth  -  LED matrix")
+    c.drawString(0.9 * inch, h - 3.2 * inch, "Arduino UNO Q  -  Bluetooth LE  -  Android  -  Web Bluetooth  -  8BitDo gamepad  -  LED matrix")
     c.setFillColor(INK)
     c.setFont("Helvetica-Bold", 10)
     c.drawString(0.9 * inch, h - 5.0 * inch, "What this document covers")
     c.setFont("Helvetica", 9.6)
     lines = [
-        "1. What the system is and the parts it is made of",
-        "2. How a command travels from a tap on the phone to a servo and the LED matrix",
-        "3. The seams: every place two components meet, what crosses, and how it fails",
-        "4. How the system was built, including the problems found along the way",
-        "5. How to install each part from scratch, and how to check it works",
-        "6. What has been tested and what has not, security, troubleshooting, and a code map",
+        "Sections 1-2: what the system is and the parts it is made of",
+        "Section 3: how a command travels from a tap on the phone to a servo and the LED matrix",
+        "Section 4: the seams, every place two components meet, what crosses, and how it fails",
+        "Section 5: how the system was built, including the problems found along the way",
+        "Section 6: how to install each part from scratch, and how to check it works",
+        "Sections 7-10: what has been tested, security, troubleshooting, and a code map",
     ]
     for i, t in enumerate(lines):
         c.drawString(1.05 * inch, h - (5.3 + i * 0.27) * inch, t)
@@ -638,7 +638,7 @@ P("The design goal was a system that is <b>fully open source, needs no accounts,
   "directly from its publisher with checksum verification, and no component phones home.")
 story.append(architecture_diagram())
 CAPTION("Figure 1. The components and the seams between them (S1, the command language, is shared by "
-        "every seam and is not drawn). S8 and S9 are build-time seams and are covered in Section 4. S10 is "
+        "every seam and is not drawn). S8 (source-code mirrors) and S9 (build and deploy) are not runtime seams; Section 4 covers them. S10 is "
         "the optional gamepad, paired straight to the board.")
 H2("Why there are so many pieces")
 P("The UNO Q's Bluetooth radio is wired to the Linux processor, not to the microcontroller that "
@@ -647,8 +647,8 @@ P("The UNO Q's Bluetooth radio is wired to the Linux processor, not to the micro
   "<font face='Courier'>arduino-router</font> on Linux and a library called <b>Bridge</b> in the "
   "sketch, connected by an internal serial link. RobotRover adds a small Python program, the "
   "<b>relay</b>, that speaks Bluetooth to the phone on one side and the router's protocol on the other. "
-  "An 8BitDo SF30 Pro gamepad can also be paired straight to the board's radio; the relay turns its sticks "
-  "and buttons into the same commands, so the phone isn't needed to drive.")
+  "An 8BitDo SF30 Pro gamepad can also be paired straight to the board's radio; the relay turns its left stick, "
+  "D-pad and buttons into the same commands, so the phone isn't needed to drive.")
 TABLE([
     ["Component", "Runs on", "Language", "Job"],
     ["Android app", "Phone (Android 8+)", "Kotlin, no libraries", "Drive pad, arm sliders, shows replies"],
@@ -676,6 +676,8 @@ _txt += [Paragraph(check_text(t), _bul, bulletText="") for t in [
     "<b>Arm card:</b> one slider per joint with its angle in a pill. Home is in the corner. The "
     "Open / Close toggle follows the gripper slider.",
     "<b>Robot says:</b> the last six replies from the sketch, the newest one highlighted.",
+    "<b>Sliders follow the robot:</b> the app asks for the positions when it connects and moves its sliders "
+    "from the robot's replies, so they are right after the gamepad moved the arm or a move was refused.",
     "<b>Power off robot</b> (below Robot says, added after the mockup was drawn): asks for confirmation, "
     "then shuts the board down so the battery can be switched off safely.",
     "Controls are dimmed and disabled until the app is connected.",
@@ -817,7 +819,7 @@ P("Holding a drive arrow does not send \"drive forever\". The app sends "
   "sketch's 400 ms timer. Releasing the button sends <font face='Courier'>x</font> (stop). If anything "
   "between the phone and the motors fails (Bluetooth drops, the app is backgrounded, the relay "
   "restarts), the pulses stop arriving and the wheels stop on their own within 400 ms. The same rule "
-  "is used by the desktop controller.")
+  "is used by the desktop controller and by the gamepad (m L R 400 every 150 ms while the stick is pushed).")
 P("The sketch ramps each wheel up to speed over about 150 ms instead of jumping to full power, which "
   "cuts the current surge at every start. Slowing down, stopping and reversing are instant, so "
   "<font face='Courier'>x</font> still stops the robot at once. Repeated pulses set the same target, so "
@@ -851,11 +853,12 @@ H2("S1  The command language")
 P("Every controller, the relay and the sketch share one tiny text protocol. It is the contract that "
   "lets each side be written, tested and replaced independently: a command typed into the Serial "
   "Monitor, the desktop console, the relay's <font face='Courier'>--send</font> option, or sent from the "
-  "phone all behave the same.")
+  "phone all behave the same. The one exception is <font face='Courier'>poweroff</font>: typed in the Serial "
+  "Monitor it only puts the sketch in power-off mode, because only the relay can shut Linux down.")
 TABLE([
     ["Command", "Effect", "Reply (examples)"],
     ["w | s | a | d  [ms]", "Forward / back / spin left / spin right. Default 1000 ms; 0 = until stopped", "forward, backward, spin left, spin right"],
-    ["m L R  [ms]", "Tank drive: left and right wheel -255 to 255 (the gamepad's sticks). Default 1000 ms", "wheels 180 -120"],
+    ["m L R  [ms]", "Wheel speeds: left and right -255 to 255 (what the gamepad sends, mixed from its left stick). Default 1000 ms", "wheels 180 -120"],
     ["x  or  stop", "Stop the wheels", "stopped"],
     ["speed N", "Wheel speed 0 - 255 (default 180)", "speed 200"],
     ["base | shoulder | elbow | grip N", "Move a joint to N degrees, clamped to its limits", "base -> 45,  base -> 180 (limit 0-180)"],
@@ -873,7 +876,7 @@ P("<b>Rules:</b> one command per line, lower case, single spaces, whole-number v
   "<font face='Courier'>board/robot_ble_bridge.py</font>); everything else is answered with "
   "<font face='Courier'>rejected: ...</font> and never reaches the sketch. When the battery is empty, or "
   "while powering off, every command that moves something is refused (\"battery empty 6.5 V, charge me\" "
-  "or \"powering off\"):")
+  "or \"powering off\"). The pattern is one line in the code, and matches plain 0-9 digits only:")
 CODE("^(?:(?:w|a|s|d) \\d{1,5}|w|a|s|d|x|stop|open|close|home|pos|batt|poweroff\n"
      "  |(?:speed|base|shoulder|elbow|grip) \\d{1,3}|m -?\\d{1,3} -?\\d{1,3}(?: \\d{1,5})?)$")
 
@@ -903,7 +906,8 @@ seam("S3  Desktop controller - relay  (Web Bluetooth)", [
     ["PC side", "desktop/index.html, served by desktop/serve.py on http://localhost:8765 bound to 127.0.0.1 "
                 "(Web Bluetooth needs a secure origin; localhost counts). Chrome or Edge only."],
     ["Extras", "Keyboard driving, a console for raw commands, demo mode (no hardware), and an LED matrix "
-               "preview. When connected, the preview mirrors only commands sent from this page."],
+               "preview, and a Power off button. On connecting it asks for pos and from then on moves its sliders "
+               "and preview from the robot's replies."],
     ["Fails how", "\"This browser can't use Bluetooth\": wrong browser or the file was opened directly "
                   "instead of through serve.py. Device list empty: PC Bluetooth off or relay not advertising."],
     ["Test it", "Try demo mode first (exercises everything except Bluetooth), then Connect."],
@@ -925,7 +929,9 @@ seam("S4  Relay - arduino-router  (MessagePack-RPC over a Unix socket)", [
                   "Bridge.provide_safe(\"robot\"), or is registered with an older router process (after a "
                   "Linux-only reboot the microcontroller keeps running). The relay handles the last case: at "
                   "startup, and whenever a command comes back \"not available\", it resets the microcontroller with "
-                  "Arduino's /opt/openocd/bin/arduino-reset.sh (GPIO, no sudo), at most once every 30 s. "
+                  "Arduino's /opt/openocd/bin/arduino-reset.sh (GPIO, no sudo), at most once every 30 s. At startup it "
+                  "does so after 5 s of \"not available\" (20 s if the router doesn't answer at all). Don't "
+                  "drive while uploading a sketch, or this reset can interrupt the upload. "
                   "Timeout: the sketch is stuck or rebooting. Connection refused: arduino-router is not running."],
     ["Test it", "./run.sh --send pos on the board (no Bluetooth involved). Expected: "
                 "base 90 shoulder 90 elbow 90 gripper 30 speed 180."],
@@ -951,7 +957,7 @@ seam("S6  Sketch - motors and servos", [
     ["Crosses", "Electrical signals."],
     ["Wheels", "Each motor: one PWM pin (analogWrite 0 - 255, 500 Hz) and two direction pins. IN1 high = "
                "forward, IN2 high = reverse, both low = coast. Commands set targets; updateDrive() ramps the "
-               "output 17 steps every 10 ms (0 - 255 in about 150 ms) and drops instantly when slowing, "
+               "output by 17 every 10 ms (0 - 255 in about 150 ms) and drops instantly when slowing, "
                "stopping or reversing. A timed drive stops itself when driveStopAt passes."],
     ["Servos", "Adafruit PCA9685 library over I2C (address 0x40), 50 Hz, angle mapped to 500 - 2500 us. "
                "updateArm() moves each servo 1 degree every 15 ms toward its target, so motion is smooth "
@@ -1044,10 +1050,10 @@ TABLE([
     ["D-pad up / down", "Shoulder up / down"],
     ["L2 / R2", "Elbow down / up"],
     ["A / B", "Gripper open / close"],
-    ["L / R", "Top speed down / up by 25 (also sets the phone's speed)"],
+    ["L / R", "Top speed down / up by 25 (the same speed the phone's arrows use; the app's slider follows)"],
     ["X", "Battery icon on the matrix"],
     ["Select", "Stop"],
-    ["Start", "Arm home"],
+    ["Start (tap, under 1 s)", "Arm home"],
     ["Hold Start + Select for 3 s", "Power off"],
 ], [2.1 * inch, 4.4 * inch])
 
@@ -1063,7 +1069,13 @@ TABLE([
                                      "MainActivity.kt (HOME_*), desktop/index.html (sliders, demo, HOME)"],
     ["Gripper open 30 / closed 120", "RobotRover.ino, RobotMatrix.h (claw), MainActivity.kt, desktop/index.html"],
     ["Drive pulse 400 ms every 150 ms", "MainActivity.kt, desktop/index.html, robot_gamepad.py (PULSE_MS, REPEAT_S)"],
-    ["Gamepad button and stick codes", "robot_gamepad.py (BUTTONS, LEFT_Y, RIGHT_Y); check with --gamepad-test"],
+    ["Gamepad button and stick codes", "robot_gamepad.py (BUTTONS, TRIGGER_AXES, LEFT_X, LEFT_Y, DPAD_X, DPAD_Y; RIGHT_Y for tank "
+                                       "style); check with --gamepad-test"],
+    ["Reply texts that code reads", "RobotRover.ino writes them. robot_gamepad.py, MainActivity.kt and desktop/index.html read "
+                                    "\"base -> N\", the pos line, \"speed N\", \"arm going home\", \"powering off\" and "
+                                    "\"battery empty\"; the desktop also reads the battery and poweroff replies"],
+    ["Controller name pattern 8bitdo|sf30", "robot_gamepad.py (DEVICE_NAME) and pair-gamepad.sh"],
+    ["The list of drive commands", "robot_ble_bridge.py (DRIVE_CMD) must list every command that drives the wheels"],
     ["Reply length under 180 bytes", "robot_ble_bridge.py (MAX_REPLY_BYTES), app MTU request (185)"],
     ["Matrix shapes and timings", "RobotMatrix.h and the LM module in desktop/index.html"],
     ["Battery divider ratio (20k / 10k = 3.0)", "The resistors and RobotRover.ino (BATT_DIVIDER)"],
@@ -1088,7 +1100,7 @@ TABLE([
     ["Drive pulses instead of start/stop", "Fails safe: losing the link stops the wheels within 400 ms."],
     ["PCA9685 for servos", "Arduino's Servo library support on the UNO Q's Zephyr core could not be confirmed; the "
                            "arm also needs separate servo power anyway."],
-    ["Kotlin app with zero libraries", "Small (838 KB), nothing to audit beyond the code, no internet permission."],
+    ["Kotlin app with zero libraries", "Small (about 860 KB), nothing to audit beyond the code, no internet permission."],
     ["Dark theme, round drive pad", "Chosen from an interactive mockup before implementation."],
     ["Desktop controller via Web Bluetooth", "Tests the same seam as the phone from a PC; demo mode needs no hardware."],
     ["\"Face + icons\" LED matrix design", "Chosen from four animated concepts: clear about what is running, with personality."],
@@ -1134,6 +1146,10 @@ TABLE([
      "thread, not between loop() passes", "A Zephyr mutex around commands and loop(); confirmed with a thread-ID test build"],
     ["Relay never started after a reboot", "The arduino user's password is marked expired, so cron refuses its @reboot job",
      "Set a password with Arduino's arduino-passwd tool (Section 6, B4)"],
+    ["Arm jumped back when the D-pad was used after the phone", "The gamepad only knew the angles from its own commands",
+     "The relay passes every sketch reply to the gamepad logic; the apps follow the replies too"],
+    ["Robot stopped while Forward was still held", "The app's scrolling page took over the touch when the thumb drifted",
+     "The drive buttons keep the touch (requestDisallowInterceptTouchEvent)"],
     ["Sketch unreachable after a reboot", "A Linux-only reboot doesn't reset the microcontroller; it stays registered "
      "with the old router", "The relay resets the microcontroller through arduino-reset.sh when the sketch doesn't answer"],
 ], [1.9 * inch, 2.3 * inch, 2.3 * inch])
@@ -1193,7 +1209,7 @@ CODE("python -m pip download --no-deps --only-binary=:all: --dest wheels \\\n"
      "    bless==0.3.0 bleak==3.0.2 dbus-fast==5.2.0 dbus-next==0.2.3 msgpack==1.2.3\n"
      "# unzip every .whl in wheels/ into robot-ble/lib/  (a wheel is a zip file)")
 NUM(start=3, items=[
-    "Copy the libraries and the three relay files to <font face='Courier'>/home/arduino/robot-ble/</font> "
+    "Copy the libraries and the five board files to <font face='Courier'>/home/arduino/robot-ble/</font> "
     "(from the project folder), then make the scripts executable and start the relay at boot:",
 ])
 CODE("adb shell \"mkdir -p ~/robot-ble\"\n"
@@ -1211,7 +1227,7 @@ NUM(start=4, items=[
     "Enter. It doesn't ask for the old password or a sudo password. <font face='Courier'>chage -l arduino</font> "
     "should then say the password never expires.",
     "<b>Allow Power off</b> (optional, needed for the app's Power off button). In "
-    "<font face='Courier'>adb shell</font> on the board, add a sudoers rule that allows only that one command:",
+    "<font face='Courier'>adb shell</font> on the board, add a sudoers rule that allows only that one command (sudo asks for the password from step 4):",
 ])
 CODE("echo 'arduino ALL=(root) NOPASSWD: /usr/bin/systemctl halt' \\\n"
      "    | sudo tee /etc/sudoers.d/robot-poweroff\n"
@@ -1223,8 +1239,15 @@ H3("Option 2: standard install (board has internet)")
 P("Copy the <font face='Courier'>board</font> folder to the board (scp or adb push) and run "
   "<font face='Courier'>bash setup.sh</font>. It installs packages with apt and pip, puts the relay in "
   "<font face='Courier'>/opt/robot-ble</font> and runs it as a root systemd service "
-  "(<font face='Courier'>robot-ble-bridge</font>). It asks for the sudo password. Running as root, the relay "
-  "can power the board off without the sudoers rule.")
+  "(<font face='Courier'>robot-ble-bridge</font>). It asks for the sudo password, so set one first (Option 1, "
+  "step 4). Running as root, the relay can power the board off without the sudoers rule.")
+P("With this install, the commands elsewhere in this guide change: instead of "
+  "<font face='Courier'>cd ~/robot-ble &amp;&amp; ./run.sh ...</font> use "
+  "<font face='Courier'>sudo /opt/robot-ble/venv/bin/python /opt/robot-ble/robot_ble_bridge.py ...</font> "
+  "(--send pos, --gamepad-test, --reset-mcu); pair the gamepad with "
+  "<font face='Courier'>/opt/robot-ble/pair-gamepad.sh</font>; read the log with "
+  "<font face='Courier'>journalctl -u robot-ble-bridge</font> instead of relay.log; and restart the relay with "
+  "<font face='Courier'>sudo systemctl restart robot-ble-bridge</font>.")
 
 H2("C. The Android app")
 NUM([
@@ -1260,9 +1283,10 @@ CODE("adb shell \"cd ~/robot-ble && ./pair-gamepad.sh\"")
 NUM(start=3, items=[
     "Check the map: <font face='Courier'>adb shell \"cd ~/robot-ble &amp;&amp; ./run.sh --gamepad-test\"</font> "
     "prints each button and stick as you press it. If a label is wrong, edit BUTTONS at the top of "
-    "robot_gamepad.py and push it again.",
+    "robot_gamepad.py, push it again and stop the running relay so it restarts with the change "
+    "(<font face='Courier'>pkill -f '[r]obot_ble_bridge.py'</font>).",
 ])
-P("<b>Check:</b> relay.log says \"gamepad connected\", and pushing both sticks forward shows the forward "
+P("<b>Check:</b> relay.log says \"gamepad connected\", and pushing the left stick forward shows the forward "
   "arrows on the matrix. Afterwards, switching the controller on in D-input mode connects it again by itself.")
 
 H2("Verification checklist")
@@ -1277,7 +1301,7 @@ TABLE([
     ["7", "Reboot the board; phone reconnects after about a minute (needs the password set, step B4)", "Boot autostart (S9)"],
     ["8", "batt answers (\"battery sensing off\" until the divider is wired)", "Battery gauge (S6)"],
     ["9", "Power off in the app: power symbol, then the sleeping face; Linux shuts down", "Safe shutdown (S4, S7)"],
-    ["10", "Gamepad: both sticks forward drives; letting go stops; switching it off mid-drive stops", "Gamepad (S10)"],
+    ["10", "Gamepad: left stick forward drives; letting go stops; switching it off mid-drive stops", "Gamepad (S10)"],
 ], [0.3 * inch, 3.9 * inch, 2.3 * inch])
 
 # ---------------------------------------------------------------- 7 testing
@@ -1296,19 +1320,25 @@ TABLE([
     ["Desktop demo: batt, Power off, refused moves", "Script-driven checks in Node with a stub page"],
     ["Relay protocol code and allowlist", "Unit test against a fake router, including the error path"],
     ["Commands run on a different thread from loop()", "Thread-ID test build on the board"],
-    ["The command lock under load", "300 commands in 2.7 s through the router on the board, no lost replies"],
+    ["The command lock under load", "300 commands in 2.6 s through the router on the board, no lost replies"],
     ["batt, poweroff, poweroff 0 and the move lockout", "On the board through arduino-router"],
     ["Power off refused without the sudoers rule", "On the board: the phone is told why, the robot carries on"],
     ["Power off all the way down", "On the board (USB power): Linux shut down cleanly; after a halt the "
                                    "matrix showed the sleeping face and the board stayed down about 45 s"],
     ["Wheel ramp, gripper relax and battery states", "Unit tests on the PC with g++"],
-    ["Tank drive command m", "On the board: m 200 200 300, m -120 150, clamping, a malformed m rejected"],
+    ["Wheel-speed command m", "On the board: m 200 200 300, m -120 150, clamping, a malformed m rejected"],
     ["Gamepad logic", "Unit tests on the PC: one-stick and tank drive, dead zone, pulses, arm steps, clamped replies, buttons, "
-                      "power-off hold, disconnect"],
+                      "power-off hold, disconnect, following the phone's changes, pausing after a refused move"],
+    ["Relay queue", "Test on the PC with a slow fake router: stale drive pulses dropped, stop and other commands kept, "
+                    "non-ASCII digits rejected"],
+    ["Slider sync on the desktop page", "Script-driven check in Node: pos, joint and speed replies move the sliders; a "
+                                       "dragged slider is left alone"],
+    ["Real SF30 Pro: pairing, reconnecting, D-pad, Start + Select", "On the board: arm targets and the matrix followed the "
+                                                                  "D-pad; the hold shut the board down"],
     ["Gamepad end to end", "On the board with a virtual SF30 Pro (Linux uinput): the relay found it, drove, moved "
                            "the base, opened and closed, changed speed, went home, and stopped when it vanished"],
     ["Relay autostart and sketch restart after a reboot", "sudo reboot on the board: relay started from cron, reset the "
-                                                         "microcontroller, sketch answered 46 s after boot"],
+                                                         "microcontroller, sketch answered 31 s after boot"],
 ], [3.0 * inch, 3.5 * inch])
 TABLE([
     ["Not yet verified", "Notes"],
@@ -1319,8 +1349,10 @@ TABLE([
     ["LED matrix brightness levels on the real board", "Conflicting reports online about the grayscale range"],
     ["Desktop controller over real Bluetooth", "Demo mode only so far"],
     ["Wheels stop when the link drops", "Logic is in place; check with item 6 of the checklist"],
-    ["Driving with the real SF30 Pro", "Paired; it reconnects by itself and its axes and buttons match the map. "
-                                   "Driving with the left stick still to be tried"],
+    ["Driving with the real SF30 Pro", "Its axes match the map. Driving with the left stick, and the A / B / X / L / R "
+                                   "labels (--gamepad-test), are still to be tried"],
+    ["App changes in 1.3 on a real phone", "Hold-to-drive with a drifting thumb, sliders following the robot, quicker stop"],
+    ["Desktop: Cancel while connecting", "Fixed from reading the code; needs real Bluetooth to confirm"],
     ["Phone and gamepad at the same time", "The drive hand-over is in place but untested with a real phone"],
     ["Cold start from the battery switch", "Both processors start together; the relay's 20 s wait should cover the "
                                            "sketch's start-up, and it resets the microcontroller if not"],
@@ -1339,8 +1371,14 @@ BUL([
     "anything to the Linux system. Stop the relay when not in use, or add a PIN in the relay as a future step.",
     "<b>Power off is open too.</b> Anyone who can connect can shut the board down, the same exposure as "
     "driving it.",
-    "<b>Least privilege.</b> The relay runs as the normal 'arduino' user, not root. Its one extra right is the "
-    "sudoers rule for <font face='Courier'>systemctl halt</font>, which allows that command and nothing else.",
+    "<b>Least privilege.</b> With the offline install the relay runs as the normal 'arduino' user, not root. Its "
+    "one extra right is the sudoers rule for <font face='Courier'>systemctl halt</font>, which allows that command "
+    "and nothing else. The standard install (setup.sh) runs the relay as a root systemd service instead.",
+    "<b>Drive time 0 means \"until stopped\".</b> A command such as <font face='Courier'>w 0</font> keeps the "
+    "wheels turning even if the link then drops. The apps and the gamepad never send it; the desktop console "
+    "and any other Bluetooth client can.",
+    "<b>Gamepad.</b> The relay treats any paired input device named like an 8BitDo controller as the gamepad. "
+    "pair-gamepad.sh switches pairing off again when it finishes.",
     "<b>Downloads were verified.</b> Every SDK and Gradle download was checked against the publisher's SHA-1 "
     "or SHA-256; Python packages came from pypi.org over HTTPS with pip's hash checks.",
     "<b>License.</b> Building the Android app uses Google's Android SDK, under the Android SDK License "
@@ -1372,13 +1410,13 @@ TABLE([
     ["Gamepad does nothing", "S10", "relay.log should say \"gamepad connected\". If not: switch it on in D-input "
                                      "mode (Start + B), or pair it again with pair-gamepad.sh."],
     ["Gamepad buttons do the wrong thing", "S10", "Run ./run.sh --gamepad-test and fix BUTTONS in robot_gamepad.py."],
-    ["Phone's drive buttons don't work", "S10", "The gamepad is driving; the phone gets the wheels 0.5 s after its sticks are released."],
+    ["Phone's drive buttons don't work", "S10", "The gamepad is driving; the phone gets the wheels about 0.5 s after the left stick is released."],
     ["Board resets when the motors or servos start", "S6", "Board regulator not buck-boost or too small, servo "
                                                            "regulator too small, or grounds not shared."],
 ], [2.2 * inch, 0.6 * inch, 3.7 * inch])
 
 # ---------------------------------------------------------------- 10 code map + files
-# Line counts are a rounded snapshot of release 1.2 (git-tracked text files; images excluded).
+# Line counts are a rounded snapshot of release 1.3 (git-tracked text files; images excluded).
 CODE_LOGIC = colors.HexColor("#2563EB")
 CODE_MARKUP = colors.HexColor("#93C5FD")
 CODE_CONFIG = colors.HexColor("#A8A49A")
@@ -1386,11 +1424,11 @@ CODE_GENERATED = colors.HexColor("#D8D5CD")
 
 CODE_MAP = [
     # name, path, rounded label, [(exact lines, kind), ...] (exact values only set the bar proportions)
-    ("Android app", "android/", "~2,090", [(641, CODE_LOGIC), (982, CODE_MARKUP), (123, CODE_CONFIG), (346, CODE_GENERATED)]),
-    ("Sketch", "RobotRover.ino, RobotMatrix.h", "~990", [(993, CODE_LOGIC)]),
-    ("Relay and gamepad", "board/", "~840", [(737, CODE_LOGIC), (100, CODE_CONFIG)]),
-    ("Desktop controller", "desktop/", "~830", [(652, CODE_LOGIC), (127, CODE_MARKUP), (46, CODE_CONFIG)]),
-    ("Docs and repo config", "README.md, .git*", "~450", [(445, CODE_CONFIG)]),
+    ("Android app", "android/", "~2,150", [(701, CODE_LOGIC), (982, CODE_MARKUP), (123, CODE_CONFIG), (346, CODE_GENERATED)]),
+    ("Sketch", "RobotRover.ino, RobotMatrix.h", "~1,010", [(1008, CODE_LOGIC)]),
+    ("Relay and gamepad", "board/", "~920", [(818, CODE_LOGIC), (103, CODE_CONFIG)]),
+    ("Desktop controller", "desktop/", "~890", [(715, CODE_LOGIC), (127, CODE_MARKUP), (46, CODE_CONFIG)]),
+    ("Docs and repo config", "README.md, .git*", "~480", [(483, CODE_CONFIG)]),
 ]
 
 def code_map_chart():
@@ -1423,31 +1461,31 @@ def code_map_chart():
 
 H1("Code map and file map", "Section 10")
 P("Where the code lives, what each part is written in, and what it builds. Line counts are rounded and "
-  "were taken at release 1.2, so they drift as the code changes.", "lead")
+  "were taken at release 1.3, so they drift as the code changes.", "lead")
 story.append(KeepTogether([
     Paragraph("Lines per folder", S["h2"]),
     code_map_chart(),
-    Paragraph(check_text("Figure 7. About 5,200 lines of text files in git at release 1.2 (about 4,000 at the "
+    Paragraph(check_text("Figure 7. About 5,450 lines of text files in git at release 1.3 (about 4,000 at the "
                          "first release). Images, including the SVG sources, and the PDF are not counted, and "
                          "neither is docs/build_pdf.py."),
               S["caption"]),
 ]))
-P("<b>The Android folder is almost half the line count, but mostly screens and icons.</b> The sketch now has "
-  "the most logic: about 990 lines of C++, then 740 of Python in the relay and gamepad support, 650 of "
-  "JavaScript in the desktop page, and 640 of Kotlin in the app.")
+P("<b>The Android folder is about 40% of the line count, but mostly screens and icons.</b> The sketch has "
+  "the most logic: about 1,010 lines of C++, then 820 of Python in the relay and gamepad support, 715 of "
+  "JavaScript in the desktop page, and 700 of Kotlin in the app.")
 
 H2("What each part builds")
 TABLE([
     ["Part", "Logic", "Builds with", "Produces", "Runs on"],
-    ["Sketch", "~990 lines C++", "arduino-cli 1.5.1 or Arduino IDE 2, board arduino:zephyr:unoq",
-     "Firmware, about 125 KB (15% of flash)", "UNO Q's STM32U585"],
-    ["Android app", "~640 lines Kotlin", "Gradle 8.9, Android Gradle Plugin 8.7.3, Kotlin 2.0.21",
+    ["Sketch", "~1,010 lines C++", "arduino-cli 1.5.1 or Arduino IDE 2, board arduino:zephyr:unoq",
+     "Firmware, about 126 KB (16% of the sketch's flash area)", "UNO Q's STM32U585"],
+    ["Android app", "~700 lines Kotlin", "Gradle 8.9, Android Gradle Plugin 8.7.3, Kotlin 2.0.21",
      "RobotRover.apk, about 860 KB", "Android 8 or newer"],
-    ["Desktop controller", "~650 lines JavaScript", "No build step; desktop/serve.py serves it",
+    ["Desktop controller", "~715 lines JavaScript", "No build step; desktop/serve.py serves it",
      "A page at localhost:8765", "Chrome or Edge on a PC"],
-    ["Bluetooth relay", "~740 lines Python", "No build step; copied to the board with adb",
+    ["Bluetooth relay", "~820 lines Python", "No build step; copied to the board with adb",
      "A Bluetooth service named RobotRover", "UNO Q's Linux side"],
-    ["This document", "~1,480 lines Python", "python docs/build_pdf.py (needs reportlab)",
+    ["This document", "~1,530 lines Python", "python docs/build_pdf.py (needs reportlab)",
      "This PDF", "Any PC with Python 3"],
 ], [1.05 * inch, 1.05 * inch, 1.8 * inch, 1.4 * inch, 1.2 * inch], font_rows=True)
 P("Only the sketch and the Android app have a real build step. The relay and the desktop page run as plain "
@@ -1456,24 +1494,24 @@ P("Only the sketch and the Android app have a real build step. The relay and the
 H2("File map")
 TABLE([
     ["Path", "What it is", "Size"],
-    ["RobotRover.ino", "The sketch: commands, wheels, servos, battery gauge, tank drive, Bridge registration", "~590 lines"],
-    ["RobotMatrix.h", "LED matrix icons and face (part of the sketch)", "~400 lines"],
-    ["board/robot_ble_bridge.py", "The Bluetooth relay: MessagePack-RPC client, allowlist, power-off, sketch restart", "~370 lines"],
-    ["board/robot_gamepad.py", "Gamepad support: finds and reads the 8BitDo, turns it into commands, --gamepad-test", "~370 lines"],
+    ["RobotRover.ino", "The sketch: commands, wheels, servos, battery gauge, wheel-speed command (m), Bridge registration", "~600 lines"],
+    ["RobotMatrix.h", "LED matrix icons and face (part of the sketch)", "~410 lines"],
+    ["board/robot_ble_bridge.py", "The Bluetooth relay: MessagePack-RPC client, allowlist, power-off, sketch restart", "~420 lines"],
+    ["board/robot_gamepad.py", "Gamepad support: finds and reads the 8BitDo, turns it into commands, --gamepad-test", "~400 lines"],
     ["board/pair-gamepad.sh", "Pairs, trusts and connects the gamepad with bluetoothctl", "~35 lines"],
     ["board/run.sh, board/keepalive.sh", "Run the relay with bundled libraries; keep it running (offline install)", "~15 lines"],
     ["board/setup.sh, board/robot-ble-bridge.service", "Standard install with apt/pip and a systemd service", "~50 lines"],
-    ["android/", "Android app (Kotlin). Gradle wrapper included; local.properties is per-PC and not in git", "~2,090 lines"],
+    ["android/", "Android app (Kotlin). Gradle wrapper included; local.properties is per-PC and not in git", "~2,150 lines"],
     ["android/app/src/main/java/.../RobotBle.kt", "Bluetooth LE client: scan, connect, queue, notifications", "~310 lines"],
-    ["android/app/src/main/java/.../MainActivity.kt", "Screen logic: drive pulses, sliders, status, log, power off", "~330 lines"],
+    ["android/app/src/main/java/.../MainActivity.kt", "Screen logic: drive pulses, sliders that follow the robot, status, log, power off", "~390 lines"],
     ["android/app/src/main/res/", "Layout, theme, colors, icons, launcher icon (XML)", "~980 lines"],
-    ["desktop/index.html", "Desktop controller, demo model and matrix preview (ports of sketch code)", "~780 lines"],
+    ["desktop/index.html", "Desktop controller, demo model and matrix preview (ports of sketch code)", "~840 lines"],
     ["desktop/serve.py", "Local web server on 127.0.0.1:8765", "~50 lines"],
-    ["docs/build_pdf.py", "Generates this document; draws every figure except the app and wiring images", "~1,480 lines"],
+    ["docs/build_pdf.py", "Generates this document; draws every figure except the app and wiring images", "~1,530 lines"],
     ["README.md", "Quick start and reference", "-"],
     ["RobotRover_System_Guide.pdf", "This document", "-"],
     ["images/", "App mockup, board pinout and wiring images (used in the README and this document), with "
-                "the SVG sources of the pinout and the wiring diagram", "-"],
+                "the SVG sources of the pinout and the wiring diagram, and the README's GIF of the board", "-"],
 ], [2.45 * inch, 3.2 * inch, 0.85 * inch])
 CALLOUT("Not in the repository.",
         "Build outputs (the APK and the firmware); the five Python packages bundled for the relay on the board "
